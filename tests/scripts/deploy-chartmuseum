@@ -1,0 +1,42 @@
+#!/bin/bash
+
+# This script deploys a local helm repo to host the dev operator chart
+# because it is not exported anywhere else.
+
+set -e -x
+
+# Create a systemctl file for chartmuseum
+cat > /etc/systemd/system/chartmuseum.service << EOF
+[Unit]
+Description=Chartmuseum server
+
+[Service]
+Type=simple
+User=gh-runner
+Group=users
+
+Environment=DEBUG=1
+Environment=STORAGE=local
+Environment=STORAGE_LOCAL_ROOTDIR=/home/gh-runner/charts
+
+WorkingDirectory=/tmp
+ExecStart=/usr/local/bin/chartmuseum --port=8080
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Download and install chartmuseum
+curl https://raw.githubusercontent.com/helm/chartmuseum/main/scripts/get-chartmuseum | bash
+
+# Start chartmuseum
+systemctl start chartmuseum
+
+# Download and install helm-push plugin
+helm plugin install https://github.com/chartmuseum/helm-push.git
+
+# Create a local helm repo
+helm repo add chartmuseum http://localhost:8080
+
+# Push helm chart to local repo
+helm cm-push ./assets/rancher-turtles-0.0.1.tgz chartmuseum

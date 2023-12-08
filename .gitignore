@@ -1,0 +1,10 @@
+/.env
+/.cache
+/bin
+*.swp
+.idea
+/tests/cypress/*/videos/*
+/tests/cypress/*/screenshots/*
+/tests/cypress/*/downloads/*
+/tests/cypress/*/node_modules
+*package-lock.json

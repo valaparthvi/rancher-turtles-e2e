@@ -1,0 +1,39 @@
+{
+  "name": "-ui-e2e",
+  "version": "1.0.0",
+  "description": "Cypress tests to test the Elemental UI",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rancher-sandbox/rancher-turtles-e2e.git"
+  },
+  "keywords": [],
+  "author": "Turtle team",
+  "license": "Apache License 2.0",
+  "bugs": {
+    "url": "https://github.com/rancher-sandbox/rancher-turtles-e2e/issues"
+  },
+  "homepage": "https://github.com/rancher-sandbox/rancher-turtles-e2e",
+  "dependencies": {
+    "@rancher-ecp-qa/cypress-library": "1.0.9",
+    "cy-verify-downloads": "^0.1.8",
+    "cypress": "^10.0.0",
+    "cypress-dark": "^1.8.3",
+    "cypress-file-upload": "^5.0.8",
+    "cypress-plugin-tab": "^1.0.5",
+    "cypress-qase-reporter": "1.4.1",
+    "dotenv": "^10.0.0",
+    "typescript": "^4.5.2"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^6.2.0",
+    "@typescript-eslint/parser": "^6.2.0",
+    "eslint-plugin-cypress": "^2.13.0"
+  }
+}
