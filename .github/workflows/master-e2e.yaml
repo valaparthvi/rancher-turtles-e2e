@@ -53,7 +53,7 @@ on:
         type: string
       runner_template:
         description: Runner template to use
-        default: capi-e2e-ci-runner-spot-x86-64-template-n2-highmem-32-v4
+        default: capi-e2e-ci-runner-spot-x86-64-template-n2-highmem-32-v5
         type: string
       test_description:
         description: Short description of the test
@@ -85,9 +85,12 @@ jobs:
       - name: Generate UUID and Runner hostname
         id: generator
         run: |
+          # NOTE: keep the runner name to less than 63 characters!
           UUID=$(uuidgen)
-          echo "uuid=${UUID}" >> ${GITHUB_OUTPUT}
-          echo "runner=capi-ci-${UUID}" >> ${GITHUB_OUTPUT}
+          GH_REPO_FULL=${{ github.repository }}
+          GH_REPO=${GH_REPO_FULL#*/}
+          echo "uuid=${UUID//-}" >> ${GITHUB_OUTPUT}
+          echo "runner=${GH_REPO//\//-}-ci-${UUID//-}" >> ${GITHUB_OUTPUT}
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v1
         with:
@@ -99,10 +102,12 @@ jobs:
           gcloud compute instances create ${{ steps.generator.outputs.runner }} \
             --source-instance-template ${{ inputs.runner_template }} \
             --zone ${{ inputs.zone }}
-      - name: Create PAT token secret
+      - name: Create GCP secrets
         run: |
           echo -n ${{ secrets.pat_token }} \
             | gcloud secrets create PAT_TOKEN_${{ steps.generator.outputs.uuid }} --data-file=-
+          echo -n ${{ github.repository }} \
+            | gcloud secrets create GH_REPO_${{ steps.generator.outputs.uuid }} --data-file=-
       - name: Get public dns name in GCP
         id: dns
         run: |
@@ -250,7 +255,7 @@ jobs:
           echo "K3s on Rancher Manager: ${{ env.INSTALL_K3S_VERSION }}" >> ${GITHUB_STEP_SUMMARY}
           echo "K8s version deployed on the cluster(s): ${{ inputs.k8s_version_to_provision }}" >> ${GITHUB_STEP_SUMMARY}
   delete-runner:
-    if: ${{ always() && needs.create-runner.result == 'success' && inputs.destroy_runner == true }}
+    if: ${{ always() }}
     needs: [create-runner, e2e]
     runs-on: ubuntu-latest
     steps:
@@ -263,10 +268,12 @@ jobs:
           credentials_json: ${{ secrets.credentials }}
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v1
-      - name: Delete PAT token secret
+      - name: Delete GCP secrets
         run: |
-          gcloud --quiet secrets delete PAT_TOKEN_${{ needs.create-runner.outputs.uuid }}
+          gcloud --quiet secrets delete PAT_TOKEN_${{ needs.create-runner.outputs.uuid }} || true
+          gcloud --quiet secrets delete GH_REPO_${{ needs.create-runner.outputs.uuid }} || true
       - name: Delete runner
+        if: ${{ always() && needs.create-runner.result == 'success' && inputs.destroy_runner == true }}
         run: |
           gcloud --quiet compute instances delete ${{ needs.create-runner.outputs.runner }} \
             --delete-disks all \
