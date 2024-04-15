@@ -39,23 +39,45 @@ Cypress.Commands.add('namespaceAutoImport', (mode) => {
   cy.reload(true);
   cy.getBySel('sortable-table-0-action-button').click();
 
-  cy.contains(mode + ' CAPI Auto-Import')
+
+  // If the desired mode is already in place, then simply reload the page.
+  cy.get('.list-unstyled.menu').then(($list) => {
+    if ($list.text().includes(mode + ' CAPI Auto-Import')) {
+      cy.contains(mode + ' CAPI Auto-Import').click();
+    } else {
+      // Workaround to close the dropdown menu
+      cy.reload();
+    }
+  })
+  cy.namespaceReset();
+});
+
+// Command to create namespace
+Cypress.Commands.add('createNamespace', (namespace) => {
+  cy.contains('local')
     .click();
+  cypressLib.accesMenu('Projects/Namespaces');
+  cy.setNamespace('Not');
+
+  // Create namespace
+  cy.contains('Create Namespace').click();
+  cy.typeValue('Name', namespace);
+  cy.clickButton('Create');
+  cy.contains('Active' + ' ' + namespace);
   cy.namespaceReset();
 });
 
 // Command to set namespace selection
+// TOOD(pvala): Could be improved to check if the namespace is already set before changing it
 Cypress.Commands.add('setNamespace', (namespace) => {
-  cy.contains('Only User Namespaces') // eslint-disable-line cypress/unsafe-to-chain-command
-    .click()
-    .type(namespace + '{enter}{esc}');
+  cy.getBySel('namespaces-dropdown', { timeout: 12000 }).trigger('click');
+  cy.get('.ns-clear').click();
+  cy.get('.ns-filter-input').type(namespace + '{enter}{esc}');
 });
 
 // Command to reset namespace selection to default 'Only User Namespaces'
 Cypress.Commands.add('namespaceReset', () => {
-  cy.getBySel('namespaces-values-close-0').click();
-  cy.contains('Only User Namespaces').click();
-  cy.getBySel('namespaces-dropdown').click();
+  cy.setNamespace('Only User Namespaces');
 });
 
 // Command to check CAPI cluster Active status
@@ -79,13 +101,13 @@ Cypress.Commands.add('installApp', (appName, namespace) => {
   cy.contains('.outer-container > .header', appName);
   cy.clickButton('Next');
   cy.clickButton('Install');
-      
+
   // Close the shell to avoid conflict
-  cy.get('.closer', { timeout:30000 }).click();
+  cy.get('.closer', { timeout: 30000 }).click();
 
   // Select app namespace
   cy.setNamespace(namespace);
-  
+
   // Resource should be deployed (green badge)
   cy.get('.outlet').contains('Deployed', { timeout: 180000 });
   cy.namespaceReset();
@@ -106,7 +128,7 @@ Cypress.Commands.add('deleteCluster', (clusterName) => {
   cy.getBySel('prompt-remove-input')
     .type(clusterName);
   cy.getBySel('prompt-remove-confirm-button').click();
-  cy.contains('Active' + ' ' + clusterName).should('not.exist', {timeout:30000});
+  cy.contains('Active' + ' ' + clusterName).should('not.exist', { timeout: 30000 });
 });
 
 // Fleet commands
