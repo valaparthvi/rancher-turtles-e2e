@@ -16,6 +16,8 @@ limitations under the License.
 
 import 'cypress-file-upload';
 import * as cypressLib from '@rancher-ecp-qa/cypress-library';
+import jsyaml from 'js-yaml';
+import _ from 'lodash';
 
 // Generic commands
 // Go to specific Sub Menu from Access Menu
@@ -194,7 +196,7 @@ Cypress.Commands.add('addCloudCredsGCP', (name, gcpCredentials) => {
 });
 
 // Command to Install App from Charts menu
-Cypress.Commands.add('installApp', (appName, namespace) => {
+Cypress.Commands.add('installApp', (appName, namespace, questions) => {
   cy.get('.nav').contains('Apps').click();
   cy.contains('Featured Charts').should('be.visible');
   cy.contains(appName, { timeout: 60000 }).click();
@@ -202,6 +204,24 @@ Cypress.Commands.add('installApp', (appName, namespace) => {
   cy.clickButton('Install');
   cy.contains('.outer-container > .header', appName);
   cy.clickButton('Next');
+
+  if (questions != undefined) {
+    // Needs to be adapted for different Apps with questions
+    if (appName == 'Rancher Turtles') {
+      cy.contains('Customize install settings').should('be.visible').click();
+    }
+
+    questions.forEach((question: { menuEntry: string; checkbox: string; inputBoxTitle: string; inputBoxValue: string; }) => {
+      if (question.checkbox) {
+        cy.contains('a', question.menuEntry).click();
+        cy.contains(question.checkbox).click(); // TODO make sure the checkbox is enabled
+      } else if (question.inputBoxTitle && question.inputBoxValue) {
+        cy.contains(question.menuEntry).click();
+        cy.contains(question.inputBoxTitle).siblings('input').clear().type(question.inputBoxValue);
+      }
+    });
+  }
+
   cy.clickButton('Install');
 
   // Close the shell to avoid conflict
@@ -212,6 +232,65 @@ Cypress.Commands.add('installApp', (appName, namespace) => {
 
   // Resource should be deployed (green badge)
   cy.get('.outlet').contains('Deployed', { timeout: 180000 });
+  cy.namespaceReset();
+});
+
+// Command for patching generic YAML resources
+Cypress.Commands.add('patchYamlResource', (clusterName, namespace, resourceKind, resourceName, patch) => {
+  // With support for nested objects, but "isNestedIn" flag must be set to true (the flag will be removed from the YAML)
+  // Patch example: const patch = {data: {manifests: {isNestedIn: true, spec: {...}}};
+
+  // Locate the resource and initiate Edit YAML mode
+  cypressLib.accesMenu(clusterName);
+  cy.setNamespace(namespace);
+  // Open Resource Search modal
+  cy.get('.icon-search.icon-lg').click();
+  cy.get('input.search').type(resourceKind);
+  cy.contains('a', resourceKind, { matchCase: false }).click();
+  cy.typeInFilter(resourceName);
+  // Click three dots menu on filtered resource (must be unique)
+  cy.getBySel('sortable-table-0-action-button').click();
+  //cy.get('.btn.actions.role-multi-action').click();
+  cy.contains('Edit YAML').click();
+
+  // Do the CodeMirror magic here
+  cy.get('.CodeMirror').then((editor) => {
+    const yaml = editor[0].CodeMirror.getValue();
+    const yamlObject = jsyaml.load(yaml);
+
+    function applyPatch(yamlObj, patchObj) {
+      Object.keys(patchObj).forEach(key => {
+        if (patchObj[key].isNestedIn) {
+          // If the patch is for a nested object merge the original and patched objects
+          const originalValue = _.get(yamlObj, key);
+          let nestedObject = {};
+          if (originalValue) {
+            nestedObject = jsyaml.load(originalValue);
+          }
+          const patchedNestedObject = _.merge(nestedObject, _.omit(patchObj[key], 'isNestedIn'));
+          _.set(yamlObj, key, jsyaml.dump(patchedNestedObject));
+        } else if (typeof patchObj[key] === 'object' && !Array.isArray(patchObj[key])) {
+            // If the patch is for an object, recursively apply the patch
+            if (!yamlObj[key]) {
+              yamlObj[key] = {};
+            }
+          applyPatch(yamlObj[key], patchObj[key]);
+        } else {
+            // If the patch is for a value, simply set the value in the YAML object
+            _.set(yamlObj, key, patchObj[key]);
+        }
+      });
+    }
+
+    applyPatch(yamlObject, patch);
+
+    const patchedYaml = jsyaml.dump(yamlObject);
+    // Set the modified YAML back to the editor
+    editor[0].CodeMirror.setValue(patchedYaml);
+    cy.clickButton('Save');
+    });
+
+  // Reset the namespace after the operation
   cy.namespaceReset();
 });
 
@@ -237,7 +316,8 @@ Cypress.Commands.add('typeInFilter', (text) => {
   cy.get('.input-sm')
     .click()
     .clear()
-    .type(text);
+    .type(text)
+    .wait(2000);
 });
 
 // Command to navigate to Home page
@@ -248,10 +328,13 @@ Cypress.Commands.add('goToHome', () => {
 
 // Fleet commands
 // Command add Fleet Git Repository
-Cypress.Commands.add('addFleetGitRepo', (repoName, repoUrl, branch, path) => {
+Cypress.Commands.add('addFleetGitRepo', (repoName, repoUrl, branch, path, workspace) => {
   cy.accesMenuSelection('Continuous Delivery', 'Git Repos');
   cy.contains('fleet-').click();
-  cy.contains('fleet-local').should('be.visible').click();
+  if (!workspace) {
+    workspace = 'fleet-local';
+  }
+  cy.contains(workspace).should('be.visible').click();
   cy.clickButton('Add Repository');
   cy.contains('Git Repo:').should('be.visible');
   cy.typeValue('Name', repoName);
@@ -267,15 +350,18 @@ Cypress.Commands.add('addFleetGitRepo', (repoName, repoUrl, branch, path) => {
 })
 
 // Command remove Fleet Git Repository
-Cypress.Commands.add('removeFleetGitRepo', (repoName, noRepoCheck) => {
+Cypress.Commands.add('removeFleetGitRepo', (repoName, noRepoCheck, workspace) => {
   // Go to 'Continuous Delivery' > 'Git Repos'
   cy.accesMenuSelection('Continuous Delivery', 'Git Repos');
   // Change the namespace to fleet-local using the dropdown on the top bar
   cy.contains('fleet-').click();
-  cy.contains('fleet-local').should('be.visible').click();
+  if (!workspace) {
+    workspace = 'fleet-local';
+  }
+  cy.contains(workspace).should('be.visible').click();
   // Click the repo link
   cy.contains(repoName).click();
-  cy.url().should("include", "fleet/fleet.cattle.io.gitrepo/fleet-local/" + repoName)
+  cy.url().should("include", "fleet/fleet.cattle.io.gitrepo/" + workspace + "/" + repoName)
   // Click on the actions menu and select 'Delete' from the menu
   cy.get('.actions .btn.actions').click();
   cy.get('.icon.group-icon.icon-trash').click();
