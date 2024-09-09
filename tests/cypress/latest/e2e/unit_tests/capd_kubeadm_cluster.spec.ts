@@ -24,7 +24,7 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
   const repoUrl = "https://github.com/rancher/rancher-turtles-e2e.git"
   const basePath = "/tests/assets/rancher-turtles-fleet-example/"
   const pathNames = ['namespace_autoimport', 'cluster_autoimport', 'clusterclass_autoimport']
-  const branch = "fleet-addon-capd" // CHANGE ME TO "main" before merging
+  const branch = "main"
 
   beforeEach(() => {
     cy.login();
