@@ -68,7 +68,30 @@ describe('Enable CAPI Providers', () => {
         cy.contains(statusReady);
       })
     );
-  })
+
+    it('Custom Fleet addon config', () => {
+      // Allows Fleet addon to be installed on specific clusters only
+      // Enables hostNetwork for Fleet addon
+
+      const clusterName = 'local';
+      const resourceKind = 'configMap';
+      const resourceName = 'fleet-addon-config';
+      const namespace = 'rancher-turtles-system';
+      const patch = { data: { manifests: { isNestedIn: true, spec: { cluster: { hostNetwork: true, selector: { matchLabels: { cni: 'by-fleet-addon-kindnet' }}}}}}};
+
+      cy.patchYamlResource(clusterName, namespace, resourceKind, resourceName, patch);
+    });
+
+    it('Check Fleet addon provider', () => {
+      // Fleet addon provider is provisioned automatically when enabled during installation
+      cy.checkCAPIMenu();
+      cy.contains('Providers').click();
+      var statusReady = 'Ready'
+      // ProviderName is not set for fleet addon hence the empty string, see https://github.com/rancher/turtles/issues/630
+      statusReady = statusReady.concat(' ', 'fleet', ' addon ', '', 'v0.3.1')
+      cy.contains(statusReady).scrollIntoView();
+    });
+  });
 
   context('Cloud Providers', { tags: '@full' }, () => {
     qase(13,

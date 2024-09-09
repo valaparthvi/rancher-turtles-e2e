@@ -41,20 +41,30 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
     })
 
     qase(5,
-      it('Add cluster fleet repo - ' + path, () => {
+      it('Add cluster fleet repo(s) - ' + path, () => {
         cypressLib.checkNavIcon('cluster-management').should('exist');
         var fullPath = basePath + path
 
         if (path.includes('clusterclass_autoimport')) {
+          // Add cni gitrepo to fleet-default workspace
+          // The cni gitrepo is scoped to quick-start class only by fleet.yaml
+          cy.addFleetGitRepo('clusterclass-cni', repoUrl, branch, fullPath+'/cni', 'fleet-default');
+          cy.contains('clusterclass-cni').click();
+          cy.contains('Bundles').should('be.visible'); // Wait until the repo details are loaded
+          cypressLib.burgerMenuToggle();
+
+          // Add classes fleet repo to fleel-local workspace
           fullPath = fullPath.concat('/', classesRepo)
           cy.addFleetGitRepo(classesRepo, repoUrl, branch, fullPath);
           cy.contains(classesRepo).click();
-          fullPath = fullPath.replace(classesRepo, clustersRepo)
+          cy.contains('Bundles').should('be.visible');
+          fullPath = fullPath.replace(classesRepo, clustersRepo);
           cypressLib.burgerMenuToggle();
         }
 
         cy.addFleetGitRepo(clustersRepo, repoUrl, branch, fullPath);
         cy.contains(clustersRepo).click();
+        cy.contains('Bundles').should('be.visible'); // Wait until the repo details are loaded
       })
     );
 
@@ -118,10 +128,13 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
     );
 
     qase(10,
-      it('Delete the CAPD cluster fleet repo - ' + path, () => {
+      it('Delete the CAPD cluster fleet repo(s) - ' + path, () => {
         if (path.includes('clusterclass_autoimport')) {
           // Remove the classes fleet repo
           cy.removeFleetGitRepo(classesRepo, true)
+          cypressLib.burgerMenuToggle();
+          // Remove the cni fleet repo from fleet-default workspace
+          cy.removeFleetGitRepo('clusterclass-cni', true, 'fleet-default');
           cypressLib.burgerMenuToggle();
         }
         // Remove the clusters fleet repo

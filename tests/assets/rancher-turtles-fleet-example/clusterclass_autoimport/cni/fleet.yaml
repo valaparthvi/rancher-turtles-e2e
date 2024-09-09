@@ -1,0 +1,4 @@
+# This will target the cni fleet bundle to the clusterGroup: quick-start only
+# The bundle will bypass and ignore the default target from GitRepo
+overrideTargets:
+  - clusterGroup: quick-start

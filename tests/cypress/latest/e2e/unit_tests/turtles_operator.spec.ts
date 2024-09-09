@@ -39,7 +39,12 @@ describe('Install Turtles Operator', { tags: '@install' }, () => {
   qase(2,
     it('Install Turtles operator', { retries: 1 }, () => {
       cy.contains('local').click();
-      cy.installApp('Rancher Turtles', 'rancher-turtles-system');
+
+      // Used for enabling fleet-addon feature within Rancher Turtles installation
+      const questions = [
+        { menuEntry: 'Rancher Turtles Features Settings', checkbox: 'Seamless integration with Fleet and CAPI' }
+      ];
+      cy.installApp('Rancher Turtles', 'rancher-turtles-system', questions);
     })
   );
 
@@ -55,7 +60,8 @@ describe('Install Turtles Operator', { tags: '@install' }, () => {
     cy.setNamespace('rancher-turtles-system');
 
     // Edit Rancher turtles deployment
-    cy.getBySel('sortable-table-1-action-button').click();
+    cy.typeInFilter(deployment);
+    cy.getBySel('sortable-table-0-action-button').click();
     cy.contains('Edit Config')
       .click();
     cy.byLabel('Arguments').as('label')

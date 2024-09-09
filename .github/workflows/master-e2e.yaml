@@ -300,16 +300,16 @@ jobs:
           QASE_RUN_ID: ${{ needs.pre-qase.outputs.qase_run_id }}
           GREPTAGS: ${{ inputs.grep_test_by_tag }}
           SPEC: |
-            /workdir/e2e/unit_tests/first_connection.spec.ts
-            /workdir/e2e/unit_tests/user.spec.ts
-            /workdir/e2e/unit_tests/turtles_operator.spec.ts
-            /workdir/e2e/unit_tests/turtles_plugin.spec.ts
-            /workdir/e2e/unit_tests/menu.spec.ts
-            /workdir/e2e/unit_tests/providers_setup.spec.ts
-            /workdir/e2e/unit_tests/capd_kubeadm_cluster.spec.ts
-            /workdir/e2e/unit_tests/capd_rke2_cluster.spec.ts
-            /workdir/e2e/unit_tests/capa_rke2_cluster.spec.ts
-            /workdir/e2e/unit_tests/capa_eks_cluster.spec.ts
+            e2e/unit_tests/first_connection.spec.ts
+            e2e/unit_tests/user.spec.ts
+            e2e/unit_tests/turtles_operator.spec.ts
+            e2e/unit_tests/turtles_plugin.spec.ts
+            e2e/unit_tests/menu.spec.ts
+            e2e/unit_tests/providers_setup.spec.ts
+            e2e/unit_tests/capd_kubeadm_cluster.spec.ts
+            e2e/unit_tests/capd_rke2_cluster.spec.ts
+            e2e/unit_tests/capa_rke2_cluster.spec.ts
+            e2e/unit_tests/capa_eks_cluster.spec.ts
           UI_ACCOUNT: ${{ inputs.ui_account }}
           UPGRADE_OS_CHANNEL: ${{ inputs.upgrade_os_channel }}
         run: |

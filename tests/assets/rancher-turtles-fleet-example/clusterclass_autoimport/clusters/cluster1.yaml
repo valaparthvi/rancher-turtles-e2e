@@ -4,7 +4,7 @@ metadata:
   name: cluster1
   namespace: default
   labels:
-    cni: quick-start-crs-0
+    cni: by-fleet-addon-kindnet
     cluster-api.cattle.io/rancher-auto-import: "true"
 spec:
   clusterNetwork:
@@ -19,7 +19,7 @@ spec:
     class: quick-start
     controlPlane:
       metadata: {}
-      replicas: 3
+      replicas: 1
     variables:
     - name: imageRepository
       value: ""
@@ -30,7 +30,7 @@ spec:
     - name: podSecurityStandard
       value:
         audit: restricted
-        enabled: true
+        enabled: false
         enforce: baseline
         warn: restricted
     version: v1.30.3
@@ -38,4 +38,4 @@ spec:
       machineDeployments:
       - class: default-worker
         name: md-0
-        replicas: 3
+        replicas: 1
