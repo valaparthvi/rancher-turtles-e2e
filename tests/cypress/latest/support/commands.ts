@@ -196,6 +196,9 @@ Cypress.Commands.add('addCloudCredsGCP', (name, gcpCredentials) => {
 });
 
 // Command to Install App from Charts menu
+// You can optionally provide an array of questions and answer them before the installation starts
+// Example1: cy.installApp('Alerting', 'default', [{ menuEntry: '(None)', checkbox: 'Enable Microsoft Teams' }]);
+// Example2: cy.installApp('Rancher Turtles', 'rancher-turtles-system', [{ menuEntry: 'Rancher Turtles Features Settings', checkbox: 'Seamless integration with Fleet and CAPI'},{ menuEntry: 'Rancher webhook cleanup settings', inputBoxTitle: 'Webhook Cleanup Image', inputBoxValue: 'registry.k8s.io/kubernetes/kubectl:v1.28.0'}]);
 Cypress.Commands.add('installApp', (appName, namespace, questions) => {
   cy.get('.nav').contains('Apps').click();
   cy.contains('Featured Charts').should('be.visible');
@@ -205,8 +208,10 @@ Cypress.Commands.add('installApp', (appName, namespace, questions) => {
   cy.contains('.outer-container > .header', appName);
   cy.clickButton('Next');
 
+  // Used for entering questions and answering them
   if (questions != undefined) {
-    // Needs to be adapted for different Apps with questions
+    // Some apps like Alerting show questions page directly so no further action needed here
+    // Some other apps like Turtles have a 'Customize install settings' checkbox or its variant which needs to be clicked
     if (appName == 'Rancher Turtles') {
       cy.contains('Customize install settings').should('be.visible').click();
     }

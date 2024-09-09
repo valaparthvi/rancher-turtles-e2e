@@ -4,7 +4,7 @@ metadata:
   name: cluster1
   namespace: default
   labels:
-    cni: by-fleet-addon
+    cni: by-fleet-addon-kindnet
     cluster-api.cattle.io/rancher-auto-import: "true"
 spec:
   clusterNetwork:
