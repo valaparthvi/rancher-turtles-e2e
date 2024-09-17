@@ -219,7 +219,7 @@ jobs:
       # NOTE: this REPORT var is needed for Cypress!
       QASE_REPORT: 1
       TAG: 0.0.1
-      TURTLES_REPO: rancher-sandbox/rancher-turtles
+      TURTLES_REPO: rancher/turtles
       CONTROLLER_IMG: localhost:5000/$TURTLES_REPO-$ARCH
     steps:
       - name: Add /usr/local/bin into PATH
