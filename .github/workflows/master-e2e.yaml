@@ -220,7 +220,7 @@ jobs:
       QASE_REPORT: 1
       TAG: 0.0.1
       TURTLES_REPO: rancher-sandbox/rancher-turtles
-      MANIFEST_IMG: localhost:5000/$TURTLES_REPO-$ARCH
+      CONTROLLER_IMG: localhost:5000/$TURTLES_REPO-$ARCH
     steps:
       - name: Add /usr/local/bin into PATH
         run: |
@@ -242,13 +242,13 @@ jobs:
       # This step builds latest turtles chart and pushes latest turtles docker image to local docker registry
       - name: Make chart
         run: |
-          TAG=v${{ env.TAG }} MANIFEST_IMG=${{ env.MANIFEST_IMG }} make docker-build
-          RELEASE_TAG=v${{ env.TAG }} CONTROLLER_IMG=${{ env.MANIFEST_IMG }} CONTROLLER_IMAGE_VERSION=v${{ env.TAG }} make build-chart
+          TAG=v${{ env.TAG }} CONTROLLER_IMG=${{ env.CONTROLLER_IMG }} make docker-build
+          RELEASE_TAG=v${{ env.TAG }} CONTROLLER_IMG=${{ env.CONTROLLER_IMG }} CONTROLLER_IMAGE_VERSION=v${{ env.TAG }} make build-chart
           docker run -d -p 5000:5000 --name registry registry:2
-          docker push ${{ env.MANIFEST_IMG }}:v${{ env.TAG }}
+          docker push ${{ env.CONTROLLER_IMG }}:v${{ env.TAG }}
 
       - name: Copy chart file
-        run: sudo cp ${{ github.workspace }}/out/package/rancher-turtles-${{ env.TAG }}.tgz ${{ runner.temp }}
+        run: sudo cp ${{ github.workspace }}/out/package/rancher-turtles-v${{ env.TAG }}.tgz ${{ runner.temp }}
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -258,8 +258,8 @@ jobs:
           cache: false
           go-version-file: tests/go.mod
       - name: Copy chart file for chartmuseum
-        run: sudo cp ${{ runner.temp }}/rancher-turtles-${{ env.TAG }}.tgz ${{ github.workspace }}/tests/assets
-      - name: Install preriquisite components
+        run: sudo cp ${{ runner.temp }}/rancher-turtles-v${{ env.TAG }}.tgz ${{ github.workspace }}/tests/assets
+      - name: Install prerequisite components
         env:
           PUBLIC_DNS: ${{ needs.create-runner.outputs.public_dns }}
           PUBLIC_DOMAIN: bc.googleusercontent.com
