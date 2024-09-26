@@ -6,10 +6,10 @@ Cypress.config();
 describe('Import CAPA RKE2', { tags: '@full' }, () => {
   const timeout = 1200000
   const repoName = 'clusters'
-  const clusterName = "turtles-qa-rke2-cluster"
+  const clusterName = 'turtles-qa-rke2-cluster'
   const branch = 'main'
   const path = '/tests/assets/rancher-turtles-fleet-example/aws_rke2'
-  const repoUrl = "https://github.com/rancher/rancher-turtles-e2e.git"
+  const repoUrl = 'https://github.com/rancher/rancher-turtles-e2e.git'
 
   beforeEach(() => {
     cy.login();
@@ -20,7 +20,7 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
     cy.namespaceAutoImport('Enable');
   })
 
-  qase(14,
+  qase(31,
     it('Add CAPA cluster fleet repo', () => {
       cypressLib.checkNavIcon('cluster-management')
         .should('exist');
@@ -46,13 +46,15 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
     cy.contains('Active ' + clusterName, { timeout: 300000 });
   })
 
-  it('Install App on imported cluster', { retries: 1 }, () => {
-    // Click on imported CAPA cluster
-    cy.contains(clusterName).click();
+  qase(32,
+    it('Install App on imported cluster', { retries: 1 }, () => {
+      // Click on imported CAPA cluster
+      cy.contains(clusterName).click();
 
-    // Install App
-    cy.installApp('Monitoring', 'cattle-monitoring');
-  })
+      // Install App
+      cy.installApp('Monitoring', 'cattle-monitoring');
+    })
+  );
 
   qase(15,
     it('Remove imported CAPA cluster from Rancher Manager', { retries: 1 }, () => {
@@ -75,5 +77,4 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
       cy.checkCAPIClusterDeleted(clusterName, timeout);
     })
   );
-
 });

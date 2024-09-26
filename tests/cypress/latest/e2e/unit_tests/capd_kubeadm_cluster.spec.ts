@@ -20,12 +20,12 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
   const timeout = 300000
   const classesRepo = 'classes'
   const clustersRepo = 'clusters'
-  const clusterName = "cluster1"
-  const className = "quick-start"
-  const repoUrl = "https://github.com/rancher/rancher-turtles-e2e.git"
-  const basePath = "/tests/assets/rancher-turtles-fleet-example/"
+  const clusterName = 'cluster1'
+  const className = 'quick-start'
+  const repoUrl = 'https://github.com/rancher/rancher-turtles-e2e.git'
+  const basePath = '/tests/assets/rancher-turtles-fleet-example/'
   const pathNames = ['namespace_autoimport', 'cluster_autoimport', 'clusterclass_autoimport']
-  const branch = "main"
+  const branch = 'main'
 
   beforeEach(() => {
     cy.login();
@@ -41,35 +41,34 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
       }
     })
 
-    qase(5,
-      it('Add cluster fleet repo(s) - ' + path, () => {
-        cypressLib.checkNavIcon('cluster-management').should('exist');
-        var fullPath = basePath + path
+    it('Add cluster fleet repo(s) - ' + path, () => {
+      cypressLib.checkNavIcon('cluster-management').should('exist');
+      var fullPath = basePath + path
 
-        if (path.includes('clusterclass_autoimport')) {
-          // Add cni gitrepo to fleet-default workspace
-          // The cni gitrepo is scoped to quick-start class only by fleet.yaml
-          cy.addFleetGitRepo('clusterclass-cni', repoUrl, branch, fullPath+'/cni', 'fleet-default');
-          cy.contains('clusterclass-cni').click();
-          cy.contains('Bundles').should('be.visible'); // Wait until the repo details are loaded
-          cypressLib.burgerMenuToggle();
-
-          // Add classes fleet repo to fleel-local workspace
-          fullPath = fullPath.concat('/', classesRepo)
-          cy.addFleetGitRepo(classesRepo, repoUrl, branch, fullPath);
-          cy.contains(classesRepo).click();
-          cy.contains('Bundles').should('be.visible');
-          fullPath = fullPath.replace(classesRepo, clustersRepo);
-          cypressLib.burgerMenuToggle();
-        }
-
-        cy.addFleetGitRepo(clustersRepo, repoUrl, branch, fullPath);
-        cy.contains(clustersRepo).click();
+      if (path.includes('clusterclass_autoimport')) {
+        // Add cni gitrepo to fleet-default workspace
+        // The cni gitrepo is scoped to quick-start class only by fleet.yaml
+        cy.addFleetGitRepo('clusterclass-cni', repoUrl, branch, fullPath+'/cni', 'fleet-default');
+        cy.contains('clusterclass-cni').click();
         cy.contains('Bundles').should('be.visible'); // Wait until the repo details are loaded
-      })
-    );
+        cypressLib.burgerMenuToggle();
 
-    qase(6,
+        // Add classes fleet repo to fleel-local workspace
+        fullPath = fullPath.concat('/', classesRepo)
+        cy.addFleetGitRepo(classesRepo, repoUrl, branch, fullPath);
+        cy.contains(classesRepo).click();
+        cy.contains('Bundles').should('be.visible');
+        fullPath = fullPath.replace(classesRepo, clustersRepo);
+        cypressLib.burgerMenuToggle();
+      }
+
+      cy.addFleetGitRepo(clustersRepo, repoUrl, branch, fullPath);
+      cy.contains(clustersRepo).click();
+      cy.contains('Bundles').should('be.visible'); // Wait until the repo details are loaded
+    })
+
+    if (path == 'namespace_autoimport') { var qase_id = 6 } else if (path == 'cluster_autoimport') { qase_id = 5 } else { qase_id = 0 }
+    qase(qase_id,
       it('Auto import child CAPD cluster', () => {
         // Check child cluster is created and auto-imported
         cy.goToHome();
@@ -85,18 +84,20 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
 
     // TODO: Refactor for other paths
     if (path.includes('namespace_autoimport')) {
-      it('Install App on imported cluster', { retries: 1 }, () => {
-        // Click on imported CAPD cluster
-        cy.contains(clusterName).click();
-        // Install App
-        cy.installApp('Monitoring', 'cattle-monitoring');
-      })
+      qase(7,
+        it('Install App on imported cluster', { retries: 1 }, () => {
+          // Click on imported CAPD cluster
+          cy.contains(clusterName).click();
+          // Install App
+          cy.installApp('Monitoring', 'cattle-monitoring');
+        })
+      );
 
-      qase(12,
+      qase(8,
         it('Scale the imported CAPD cluster', () => {
           // Access CAPI cluster
           cy.checkCAPIMenu();
-          cy.contains("Machine Deployments").click();
+          cy.contains('Machine Deployments').click();
           cy.getBySel('sortable-table-0-action-button').click();
           cy.contains('Edit YAML')
             .click();
@@ -143,7 +144,7 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
           // Wait until the following returns no clusters found
           cy.checkCAPIClusterDeleted(clusterName, timeout);
           // Remove the clusterclass
-          cy.removeCAPIResource("Cluster Classes", className);
+          cy.removeCAPIResource('Cluster Classes', className);
         } else {
           // Remove the clusters fleet repo
           cy.removeFleetGitRepo(clustersRepo);
