@@ -142,7 +142,8 @@ Cypress.Commands.add('addInfraProvider', (providerType, name, namespace, cloudCr
   cy.checkCAPIMenu();
   cy.contains('Providers').click();
   cy.clickButton('Create');
-  cy.contains(providerType, { matchCase: false }).click();
+  var selector = 'select-icon-grid-' + providerType
+  cy.getBySel(selector).click();
   cy.contains('Provider: Create ' + providerType, { matchCase: false }).should('be.visible');
 
   // TODO: Add variables support after capi-ui-extension/issues/49
@@ -150,7 +151,7 @@ Cypress.Commands.add('addInfraProvider', (providerType, name, namespace, cloudCr
   cy.typeValue('Name', name);
 
   // Select Cloud credentials name
-  if (providerType != 'docker') {
+  if (providerType != 'Docker') {
     cy.getBySel('cluster-prov-select-credential').trigger('click');
     cy.contains(cloudCredentials).click();
   }
@@ -179,10 +180,10 @@ Cypress.Commands.add('addCloudCredsAWS', (name, accessKey, secretKey) => {
   cy.accesMenuSelection('Cluster Management', 'Cloud Credentials');
   cy.contains('API Key').should('be.visible');
   cy.clickButton('Create');
-  cy.contains('Amazon').click();
+  cy.getBySel('subtype-banner-item-aws').click();
   cy.typeValue('Name', name);
   cy.typeValue('Access Key', accessKey);
-  cy.typeValue('Secret Key', secretKey, false, false );
+  cy.typeValue('Secret Key', secretKey, false, false);
   cy.clickButton('Create');
   cy.contains('API Key').should('be.visible');
   cy.contains(name).should('be.visible');
@@ -193,9 +194,24 @@ Cypress.Commands.add('addCloudCredsGCP', (name, gcpCredentials) => {
   cy.accesMenuSelection('Cluster Management', 'Cloud Credentials');
   cy.contains('API Key').should('be.visible');
   cy.clickButton('Create');
-  cy.contains('Google').click();
+  cy.getBySel('subtype-banner-item-gcp').click();
   cy.typeValue('Name', name);
   cy.getBySel('text-area-auto-grow').type(gcpCredentials, { log: false });
+  cy.clickButton('Create');
+  cy.contains('API Key').should('be.visible');
+  cy.contains(name).should('be.visible');
+});
+
+// Command to add Azure Cloud Credentials
+Cypress.Commands.add('addCloudCredsAzure', (name: string, clientID: string, clientSecret: string, subscriptionID: string) => {
+  cy.accesMenuSelection('Cluster Management', 'Cloud Credentials');
+  cy.contains('API Key').should('be.visible');
+  cy.clickButton('Create');
+  cy.getBySel('subtype-banner-item-azure').click();
+  cy.typeValue('Name', name);
+  cy.typeValue('Client ID', clientID);
+  cy.typeValue('Client Secret', clientSecret, false, false);
+  cy.typeValue('Subscription ID', subscriptionID);
   cy.clickButton('Create');
   cy.contains('API Key').should('be.visible');
   cy.contains(name).should('be.visible');
@@ -281,14 +297,14 @@ Cypress.Commands.add('patchYamlResource', (clusterName, namespace, resourceKind,
           const patchedNestedObject = _.merge(nestedObject, _.omit(patchObj[key], 'isNestedIn'));
           _.set(yamlObj, key, jsyaml.dump(patchedNestedObject));
         } else if (typeof patchObj[key] === 'object' && !Array.isArray(patchObj[key])) {
-            // If the patch is for an object, recursively apply the patch
-            if (!yamlObj[key]) {
-              yamlObj[key] = {};
-            }
+          // If the patch is for an object, recursively apply the patch
+          if (!yamlObj[key]) {
+            yamlObj[key] = {};
+          }
           applyPatch(yamlObj[key], patchObj[key]);
         } else {
-            // If the patch is for a value, simply set the value in the YAML object
-            _.set(yamlObj, key, patchObj[key]);
+          // If the patch is for a value, simply set the value in the YAML object
+          _.set(yamlObj, key, patchObj[key]);
         }
       });
     }
@@ -299,7 +315,7 @@ Cypress.Commands.add('patchYamlResource', (clusterName, namespace, resourceKind,
     // Set the modified YAML back to the editor
     editor[0].CodeMirror.setValue(patchedYaml);
     cy.clickButton('Save');
-    });
+  });
 
   // Reset the namespace after the operation
   cy.namespaceReset();
@@ -382,4 +398,19 @@ Cypress.Commands.add('removeFleetGitRepo', (repoName, noRepoCheck, workspace) =>
   } else {
     cy.contains('No repositories have been added').should('be.visible');
   }
+})
+
+// Command forcefully update Fleet Git Repository
+Cypress.Commands.add('forceUpdateFleetGitRepo', (repoName) => {
+  // Go to 'Continuous Delivery' > 'Git Repos'
+  cy.accesMenuSelection('Continuous Delivery', 'Git Repos');
+  // Change the namespace to fleet-local using the dropdown on the top bar
+  cy.contains('fleet-').click();
+  cy.contains('fleet-local').should('be.visible').click();
+  // Click the repo link
+  cy.contains(repoName).click();
+  cy.url().should("include", "fleet/fleet.cattle.io.gitrepo/fleet-local/" + repoName)
+  // Click on the actions menu and select 'Delete' from the menu
+  cy.get('.actions .btn.actions').click();
+  cy.get('.icon.group-icon.icon-refresh').click();
 })

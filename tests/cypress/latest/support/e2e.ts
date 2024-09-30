@@ -23,6 +23,7 @@ declare global {
       namespaceAutoImport(mode: string): Chainable<Element>;
       addFleetGitRepo(repoName: string, repoUrl: string, branch: string, path: string, workspace?: string): Chainable<Element>;
       removeFleetGitRepo(repoName: string, noRepoCheck?: boolean, workspace?: string): Chainable<Element>;
+      forceUpdateFleetGitRepo(repoName: string): Chainable<Element>;
       accesMenuSelection(firstAccessMenu: string, secondAccessMenu?: string): Chainable<Element>;
       installApp(appName: string, namespace: string, questions?: any): Chainable<Element>;
       deleteCluster(clusterName: string): Chainable<Element>;
@@ -38,6 +39,7 @@ declare global {
       removeCAPIResource(resourceType: string, resourceName: string): Chainable<Element>;
       addCloudCredsAWS(name: string, accessKey: string, secretKey: string): Chainable<Element>;
       addCloudCredsGCP(name: string, gcpCredentials: string): Chainable<Element>;
+      addCloudCredsAzure(name: string, clientID: string, clientSecret: string, subscriptionID: string): Chainable<Element>;
       typeInFilter(text: string): Chainable<Element>;
       goToHome(): Chainable<Element>;
       patchYamlResource(clusterName: string, namespace: string, resourceKind: string, resourceName: string, patch: object): Chainable<Element>;
@@ -66,5 +68,5 @@ require('cy-verify-downloads').addCustomCommand();
 require('cypress-plugin-tab');
 require('@rancher-ecp-qa/cypress-library');
 // @ts-ignore
-import registerCypressGrep from '@cypress/grep' 
+import registerCypressGrep from '@cypress/grep'
 registerCypressGrep()
