@@ -74,13 +74,12 @@ describe('Enable CAPI Providers', () => {
 
     it('Custom Fleet addon config', () => {
       // Allows Fleet addon to be installed on specific clusters only
-      // Enables hostNetwork for Fleet addon
 
       const clusterName = 'local';
       const resourceKind = 'configMap';
       const resourceName = 'fleet-addon-config';
       const namespace = 'rancher-turtles-system';
-      const patch = { data: { manifests: { isNestedIn: true, spec: { cluster: { hostNetwork: true, selector: { matchLabels: { cni: 'by-fleet-addon-kindnet' } } } } } } };
+      const patch = { data: { manifests: { isNestedIn: true, spec: { cluster: { selector: { matchLabels: { cni: 'by-fleet-addon-kindnet' } } } } } } };
 
       cy.patchYamlResource(clusterName, namespace, resourceKind, resourceName, patch);
     });
