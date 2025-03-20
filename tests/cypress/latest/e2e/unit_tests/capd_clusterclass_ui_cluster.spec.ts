@@ -14,6 +14,7 @@ limitations under the License.
 import '~/support/commands';
 import * as cypressLib from '@rancher-ecp-qa/cypress-library';
 import { qase } from 'cypress-qase-reporter/dist/mocha';
+import { skipDeletionTest } from '~/support/utils';
 
 Cypress.config();
 describe('Create CAPD', { tags: '@short' }, () => {
@@ -92,14 +93,13 @@ describe('Create CAPD', { tags: '@short' }, () => {
       cy.checkCAPIClusterProvisioned(clusterName);
     })
 
-
     it('Delete the CAPI cluster and fleet repo', () => {
       cy.removeCAPIResource('Clusters', clusterName, timeout);
 
       // Remove the classes fleet repo
       cypressLib.burgerMenuToggle();
       cy.removeFleetGitRepo(classesRepo, true);
-          
+
       // Ensure the cluster is not available in navigation menu
       cy.getBySel('side-menu').then(($menu) => {
         if ($menu.text().includes(clusterName)) {

@@ -30,7 +30,8 @@ describe('Enable CAPI Providers', () => {
   const kubeadmProviderVersion = 'v1.9.5'
   const kubeadmBaseURL = 'https://github.com/kubernetes-sigs/cluster-api/releases/'
   const kubeadmProviderTypes = ['bootstrap', 'control plane']
-  const providerNamespaces = ['capi-kubeadm-bootstrap-system', 'capi-kubeadm-control-plane-system', 'capd-system', 'capa-system', 'capg-system', 'capz-system']
+  const providerNamespaces = ['capi-kubeadm-bootstrap-system', 'capi-kubeadm-control-plane-system', 'capd-system']
+  const cloudProviderNamespaces = ['capa-system', 'capg-system', 'capz-system']
   const vsphereProviderNamespace = 'capv-system'
 
   beforeEach(() => {
@@ -50,11 +51,13 @@ describe('Enable CAPI Providers', () => {
         it('Create Kubeadm Providers', () => {
           // Create CAPI Kubeadm providers
           if (providerType == 'control plane') {
+            // https://github.com/kubernetes-sigs/cluster-api/releases/v1.9.5/control-plane-components.yaml
             const providerURL = kubeadmBaseURL + kubeadmProviderVersion + '/' + 'control-plane' + '-components.yaml'
             const providerName = kubeadmProvider + '-' + 'control-plane'
             const namespace = 'capi-kubeadm-control-plane-system'
             cy.addCustomProvider(providerName, namespace, kubeadmProvider, providerType, kubeadmProviderVersion, providerURL);
           } else {
+            // https://github.com/kubernetes-sigs/cluster-api/releases/v1.9.5/bootstrap-components.yaml
             const providerURL = kubeadmBaseURL + kubeadmProviderVersion + '/' + providerType + '-components.yaml'
             const providerName = kubeadmProvider + '-' + providerType
             const namespace = 'capi-kubeadm-bootstrap-system'
@@ -97,7 +100,7 @@ describe('Enable CAPI Providers', () => {
     });
   });
 
-context('vSphere provider', { tags: '@vsphere' }, () => {
+  context('vSphere provider', { tags: '@vsphere' }, () => {
     it('Create CAPI Providers Namespace - ' + vsphereProviderNamespace, () => {
       cy.createNamespace(vsphereProviderNamespace);
     })
@@ -124,6 +127,13 @@ context('vSphere provider', { tags: '@vsphere' }, () => {
   })
 
   context('Cloud Providers', { tags: '@full' }, () => {
+
+    cloudProviderNamespaces.forEach(namespace => {
+      it('Create CAPI Cloud Providers Namespaces - ' + namespace, () => {
+        cy.createNamespace(namespace);
+      })
+    })
+
     qase(13,
       it('Create CAPA provider', () => {
         // Create AWS Infrastructure provider

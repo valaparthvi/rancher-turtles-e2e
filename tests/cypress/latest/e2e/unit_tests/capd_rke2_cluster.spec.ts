@@ -14,6 +14,7 @@ limitations under the License.
 import '~/support/commands';
 import * as cypressLib from '@rancher-ecp-qa/cypress-library';
 import { qase } from 'cypress-qase-reporter/dist/mocha';
+import { skipDeletionTest } from '~/support/utils';
 
 Cypress.config();
 describe('Import CAPD RKE2', { tags: '@short' }, () => {
@@ -152,7 +153,7 @@ describe('Import CAPD RKE2', { tags: '@short' }, () => {
           // This is checked by ensuring the cluster is not available in CAPI menu
           cy.checkCAPIClusterDeleted(clusterName, timeout);
         }
-        
+
         // Ensure the cluster is not available in navigation menu
         cy.getBySel('side-menu').then(($menu) => {
           if ($menu.text().includes(clusterName)) {
@@ -161,6 +162,5 @@ describe('Import CAPD RKE2', { tags: '@short' }, () => {
         })
       })
     );
-
   })
 });
