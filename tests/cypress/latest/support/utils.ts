@@ -20,6 +20,4 @@ export const isUIVersion = (version: string) => {
   return (new RegExp(version)).test(Cypress.env("capi_ui_version"));
 }
 
-export const skipDeletionTest = () => {
-  return Boolean(Cypress.env("skip_cluster_delete"));
-}
+export const skipClusterDeletion = Cypress.env("skip_cluster_delete") == "false"
