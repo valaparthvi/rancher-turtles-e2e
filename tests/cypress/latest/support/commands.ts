@@ -45,7 +45,13 @@ Cypress.Commands.add('namespaceAutoImport', (mode) => {
 Cypress.Commands.add('setAutoImport', (mode) => {
   // If the desired mode is already in place, then simply reload the page.
   cy.getBySel('sortable-table-0-action-button').click();
-  cy.get('.list-unstyled.menu').then(($list) => {
+
+  var dropdownLabel = '.list-unstyled.menu'
+  if (isRancherManagerVersion("2.11")) {
+    dropdownLabel = '.popperContainer'
+  }
+
+  cy.get(dropdownLabel).then(($list) => {
     if ($list.text().includes(mode + ' CAPI Auto-Import')) {
       cy.contains(mode + ' CAPI Auto-Import').click();
     } else {
@@ -375,7 +381,7 @@ Cypress.Commands.add('checkChart', (operation, chartName, namespace, version, qu
   cy.clickButton(operation);
   // During update, Chart name changes to App name
   if (operation == "Install") {
-    cy.contains('.outer-container > .header', chartName);
+    cy.contains('.header > .title', chartName)
   }
   cy.clickButton('Next');
 
@@ -609,7 +615,7 @@ Cypress.Commands.add('checkFleetGitRepo', (repoName, workspace) => {
 
 // Fleet namespace toggle
 Cypress.Commands.add('fleetNamespaceToggle', (toggleOption = 'local') => {
-  cy.contains('fleet-').click();
+  cy.getBySel('workspace-switcher').click();
   cy.contains(toggleOption).should('be.visible').click();
 });
 
