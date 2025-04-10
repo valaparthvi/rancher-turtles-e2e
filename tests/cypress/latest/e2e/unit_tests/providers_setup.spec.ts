@@ -86,7 +86,9 @@ describe('Enable CAPI Providers', () => {
       })
     );
 
-    it('Custom Fleet addon config', () => {
+    xit('Custom Fleet addon config', () => {
+      // Skipped as we are unable to install Monitoring app on clusters without cattle-fleet-system namespace
+      // Ref. https://github.com/rancher/fleet/issues/3521
       // Allows Fleet addon to be installed on specific clusters only
 
       const clusterName = 'local';
