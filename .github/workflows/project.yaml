@@ -36,9 +36,7 @@ jobs:
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           run: |
-            declare -i PR_NUMBER=${{ github.event.pull_request.number }}
-            export PR_NUMBER
-
+            PR_NUMBER=$(( ${{ github.event.pull_request.number }} ))
             echo "DEBUG: PR_NUMBER is: '$PR_NUMBER'"
             HAS_LINKED=$(gh api graphql -f query='
                 query($owner: String!, $repo: String!, $number: Int!) {
