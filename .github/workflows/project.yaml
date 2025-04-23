@@ -20,15 +20,26 @@ jobs:
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           run: gh issue add-label "${{ github.event.issue.number }}" --label "squad/qa"
+
+        - name: Set up Environment Variables
+          if: github.event_name == 'pull_request'
+          id: env_vars
+          run: |
+            REPO_URL=${{github.repositoryUrl}}
+            OWNER=$(echo "$REPO_URL" | sed -E 's/.*:\/\/github\.com\/([^/]+)\/.*/\1/')
+            REPO=$(echo "$REPO_URL" | sed -E 's/.*\/([^/]+)\.git/\1/')
+            echo "OWNER=$OWNER" >> "$GITHUB_ENV"
+            echo "REPO=$REPO" >> "$GITHUB_ENV"
         - name: Check PR for Linked Issues and add label if it is orphan
           if: github.event_name == 'pull_request'
           id: check_pr
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-            PR_NUMBER: "${{ github.event.pull_request.number }}"
-            REPO: "${{ github.repository }}"
-            OWNER: "${{ github.repository_owner }}"
           run: |
+            declare -i PR_NUMBER=${{ github.event.pull_request.number }}
+            export PR_NUMBER
+
+            echo "DEBUG: PR_NUMBER is: '$PR_NUMBER'"
             HAS_LINKED=$(gh api graphql -f query='
                 query($owner: String!, $repo: String!, $number: Int!) {
                     repository(owner: $owner, name: $repo) {
@@ -41,7 +52,7 @@ jobs:
                         }
                     }
                 }
-            ' -f owner="$OWNER" -f repo="$REPO" -f number="$PR_NUMBER" --jq '.data.repository.pullRequest.closingIssuesReferences.nodes | length > 0')
+            ' -f owner="$OWNER" -f repo="$REPO" -f number=$PR_NUMBER --jq '.data.repository.pullRequest.closingIssuesReferences.nodes | length > 0')
             echo "has_linked_issues=$HAS_LINKED" >> "$GITHUB_OUTPUT"
 
             if [[ "$HAS_LINKED" == "false" ]]; then
