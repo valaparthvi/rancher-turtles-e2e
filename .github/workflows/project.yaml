@@ -15,6 +15,8 @@ jobs:
             issues: write
             pull-requests: write
         steps:
+        - name: Checkout
+          uses: actions/checkout@v4
         - name: Add squad/qa label to assigned issues
           if: github.event_name == 'issues'
           env:
