@@ -66,6 +66,5 @@ jobs:
           uses: actions/add-to-project@v1.0.2
           with:
             project-url: https://github.com/orgs/rancher/projects/105/views/1
-            column-name: In Progress # Adjust if needed
             github-token: ${{ secrets.GITHUB_TOKEN }}
             labeled: squad/qa
