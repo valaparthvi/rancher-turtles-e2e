@@ -65,6 +65,6 @@ jobs:
         - name: Add to project if issue/pr has label 'squad/qa'
           uses: actions/add-to-project@v1.0.2
           with:
-            project-url: https://github.com/orgs/rancher/projects/105/views/1
+            project-url: https://github.com/users/valaparthvi/projects/1/views/1
             github-token: ${{ secrets.GITHUB_TOKEN }}
             labeled: squad/qa
