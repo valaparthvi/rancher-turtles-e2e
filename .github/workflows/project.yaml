@@ -22,7 +22,7 @@ jobs:
         - name: Add squad/qa label to assigned issues
           if: github.event_name == 'issues'
           env:
-            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            GH_TOKEN: ${{ secrets.GH_TOKEN }}
           run: gh issue edit "${{ github.event.issue.number }}" --add-label "squad/qa" --add-project="${{ env.PROJECT_NAME }}"
 
         - name: Set up Environment Variables
@@ -38,7 +38,7 @@ jobs:
           if: github.event_name == 'pull_request'
           id: check_pr
           env:
-            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            GH_TOKEN: ${{ secrets.GH_TOKEN }}
           run: |
             PR_NUMBER=$(( ${{ github.event.pull_request.number }} ))
             HAS_LINKED=$(gh api graphql -f query='
