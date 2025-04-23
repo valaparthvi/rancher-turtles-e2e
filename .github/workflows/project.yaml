@@ -4,6 +4,8 @@ on:
   issues:
     types:
       - assigned
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
     add_label:
@@ -15,67 +17,44 @@ jobs:
         steps:
         - name: Add squad/qa label to assigned issues
           if: github.event_name == 'issues'
-          uses: actions/github-script@v7
-          with:
-            github-token: ${{ secrets.GITHUB_TOKEN }}
-            script: |
-                const issueNumber = context.issue.number;
-                console.log(`Adding squad/qa label to issue #${issueNumber}`);
-                await github.rest.issues.addLabels({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: issueNumber,
-                    labels: ['squad/qa']
-                });
-                console.log(`Label added to issue #${issueNumber}`);
-        - name: Check PR for Linked Issues and draft status
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          run: gh issue add-label "${{ github.event.issue.number }}" --label "squad/qa"
+        - name: Check PR for Linked Issues and add label if it is orphan
           if: github.event_name == 'pull_request'
-          uses: actions/github-script@v7
-          id: check_linked_issue
+          id: check_pr
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            PR_NUMBER: "${{ github.event.pull_request.number }}"
+            REPO: "${{ github.repository }}"
+            OWNER: "${{ github.repository_owner }}"
+          run: |
+            HAS_LINKED=$(gh api graphql -f query='
+                query($owner: String!, $repo: String!, $number: Int!) {
+                    repository(owner: $owner, name: $repo) {
+                        pullRequest(number: $number) {
+                            closingIssuesReferences(first: 10) {
+                                nodes {
+                                number
+                                }
+                            }
+                        }
+                    }
+                }
+            ' -f owner="$OWNER" -f repo="$REPO" -f number="$PR_NUMBER" --jq '.data.repository.pullRequest.closingIssuesReferences.nodes | length > 0')
+            echo "has_linked_issues=$HAS_LINKED" >> "$GITHUB_OUTPUT"
+
+            if [[ "$HAS_LINKED" == "false" ]]; then
+                echo "No linked issues found for PR #$PR_NUMBER. Adding label 'squad/qa'."
+                gh issue add-label "$PR_NUMBER" --label "squad/qa"
+            else
+                echo "PR #$PR_NUMBER has linked issues. Skipping label addition."
+            fi
+
+        - name: Add to project if issue/pr has label 'squad/qa'
+          uses: actions/add-to-project@v1.0.2
           with:
+            project-url: https://github.com/orgs/rancher/projects/105/views/1
+            column-name: In Progress # Adjust if needed
             github-token: ${{ secrets.GITHUB_TOKEN }}
-            script: |
-                const pr = context.payload.pull_request;
-                const isDraft = pr.draft;
-
-                const { data: commits } = await github.rest.pulls.listCommits({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: pr.number,
-                });
-
-                const hasIssueLink = commits.some(commit =>
-                    /Fixes:\s*#\d+|Closes:\s*#\d+|Refs:\s*#\d+/i.test(commit.commit.message)
-                );
-                const { data: pullRequest } = await github.rest.pulls.get({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: pr.number,
-                });
-
-                if (!isDraft && !hasIssueLink) {
-                    console.log(`Adding squad/qa label to PR #${pr.number}`);
-                    await github.rest.issues.addLabels({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        issue_number: pr.number,
-                        labels: ['squad/qa'],
-                    });
-                    console.log(`Added squad/qa label to PR #${pr.number}`);
-                } else {
-                    console.log(`PR #${pr.number} is not ready for review or is linked to an issue.  Not adding label.`);
-                }  
-    add_to_project:
-        name: Add to Project Board
-        runs-on: ubuntu-latest
-        permissions:
-            issues: write
-            pull-requests: write
-        steps:
-            - name: Add to project if issue/pr has label 'squad/qa'
-              uses: actions/add-to-project@RELEASE_VERSION
-              with:
-                project-url: https://github.com/orgs/rancher/projects/105/views/1
-                column-name: In Progress # Adjust if needed
-                github-token: ${{ secrets.GITHUB_TOKEN }}
-                labeled: squad/qa  
+            labeled: squad/qa
