@@ -5,12 +5,12 @@ on:
     types:
       - assigned
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, reopened]
 
 jobs:
     add_label:
         env:
-            PROJECT_NAME: "@valaparthvi's untitled project"
+            PROJECT_NAME: "CAPI / Turtles"
         name: Add Label
         runs-on: ubuntu-latest
         permissions:
