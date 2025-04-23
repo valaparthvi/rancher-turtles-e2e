@@ -9,6 +9,8 @@ on:
 
 jobs:
     add_label:
+        env:
+            PROJECT_NAME: "@valaparthvi's untitled project"
         name: Add Label
         runs-on: ubuntu-latest
         permissions:
@@ -21,7 +23,7 @@ jobs:
           if: github.event_name == 'issues'
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          run: gh issue edit "${{ github.event.issue.number }}" --add-label "squad/qa"
+          run: gh issue edit "${{ github.event.issue.number }}" --add-label "squad/qa" --add-project="${{ env.PROJECT_NAME }}"
 
         - name: Set up Environment Variables
           if: github.event_name == 'pull_request'
@@ -57,14 +59,7 @@ jobs:
 
             if [[ "$HAS_LINKED" == "false" ]]; then
                 echo "No linked issues found for PR #$PR_NUMBER. Adding label 'squad/qa'."
-                gh pr edit $PR_NUMBER --add-label "squad/qa"
+                gh pr edit $PR_NUMBER --add-label="squad/qa" --add-project="${{ env.PROJECT_NAME }}"
             else
                 echo "PR #$PR_NUMBER has linked issues. Skipping label addition."
             fi
-
-        - name: Add to project if issue/pr has label 'squad/qa'
-          uses: actions/add-to-project@v1.0.2
-          with:
-            project-url: https://github.com/users/valaparthvi/projects/1
-            github-token: ${{ secrets.GITHUB_TOKEN }}
-            labeled: squad/qa
