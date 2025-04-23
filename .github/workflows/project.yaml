@@ -19,7 +19,7 @@ jobs:
           with:
             github-token: ${{ secrets.GITHUB_TOKEN }}
             script: |
-                const issueNumber = context.payload.issue.number;
+                const issueNumber = context.issue.number;
                 console.log(`Adding squad/qa label to issue #${issueNumber}`);
                 await github.rest.issues.addLabels({
                     owner: context.repo.owner,
@@ -35,42 +35,36 @@ jobs:
           with:
             github-token: ${{ secrets.GITHUB_TOKEN }}
             script: |
-                const { owner, repo } = context.repo;
-                const pull_number = context.payload.pull_request.number;
-
-                const { data: pullRequest } = await github.rest.pulls.get({
-                owner,
-                repo,
-                pull_number,
-                });
-
-                const linkedIssues = pullRequest.related_issues;
-                core.setOutput('has_linked_issue', linkedIssues && linkedIssues.length > 0 ? 'true' : 'false');
-                core.setOutput('pull_number', pull_number);
-                core.setOutput('pull_request_in_draft', pullRequest.draft)
-        - name: Add squad/qa label to pull request if it is not in draft
-          uses: actions/github-script@v7
-          if: github.event_name == 'pull_request' && steps.check_linked_issue.outputs.has_linked_issue == 'false'
-          with:
-            github-token: ${{ secrets.GITHUB_TOKEN }}
-            script: |
                 const pr = context.payload.pull_request;
                 const isDraft = pr.draft;
-    
-                console.log(`PR #${pr.number} is draft: ${isDraft}`);
-    
-                if (!isDraft) {
-                    console.log(`Adding squad/qa label to PR #${pr.number}`);
-                    await github.rest.issues.addLabels({
+
+                const { data: commits } = await github.rest.pulls.listCommits({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
-                    issue_number: pr.number,
-                    labels: ['squad/qa'],
+                    pull_number: pr.number,
+                });
+
+                const hasIssueLink = commits.some(commit =>
+                    /Fixes:\s*#\d+|Closes:\s*#\d+|Refs:\s*#\d+/i.test(commit.commit.message)
+                );
+                const { data: pullRequest } = await github.rest.pulls.get({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pr.number,
+                });
+
+                if (!isDraft && !hasIssueLink) {
+                    console.log(`Adding squad/qa label to PR #${pr.number}`);
+                    await github.rest.issues.addLabels({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: pr.number,
+                        labels: ['squad/qa'],
                     });
                     console.log(`Added squad/qa label to PR #${pr.number}`);
                 } else {
-                    console.log(`PR #${pr.number} is a draft.  Not adding label.`);
-                }
+                    console.log(`PR #${pr.number} is not ready for review or is linked to an issue.  Not adding label.`);
+                }  
     add_to_project:
         name: Add to Project Board
         runs-on: ubuntu-latest
@@ -78,10 +72,10 @@ jobs:
             issues: write
             pull-requests: write
         steps:
-            - name: Add to project if has squad/qa label
+            - name: Add to project if issue/pr has label 'squad/qa'
               uses: actions/add-to-project@RELEASE_VERSION
               with:
-                project-url: ${{ env.PROJECT_URL }}
+                project-url: https://github.com/orgs/rancher/projects/105/views/1
                 column-name: In Progress # Adjust if needed
                 github-token: ${{ secrets.GITHUB_TOKEN }}
                 labeled: squad/qa  
