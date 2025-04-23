@@ -39,18 +39,18 @@ jobs:
             PR_NUMBER=$(( ${{ github.event.pull_request.number }} ))
             echo "DEBUG: PR_NUMBER is: '$PR_NUMBER'"
             HAS_LINKED=$(gh api graphql -f query='
-                query($owner: String!, $repo: String!, $number: Int!) {
+                query($owner: String!, $repo: String!) {
                     repository(owner: $owner, name: $repo) {
-                        pullRequest(number: $number) {
+                        pullRequest(number: $PR_NUMBER) {
                             closingIssuesReferences(first: 10) {
                                 nodes {
-                                number
+                                    number
                                 }
                             }
                         }
                     }
                 }
-            ' -f owner="$OWNER" -f repo="$REPO" -f number=$PR_NUMBER --jq '.data.repository.pullRequest.closingIssuesReferences.nodes | length > 0')
+            ' -f owner="$OWNER" -f repo="$REPO" --jq '.data.repository.pullRequest.closingIssuesReferences.nodes | length > 0')
             echo "has_linked_issues=$HAS_LINKED" >> "$GITHUB_OUTPUT"
 
             if [[ "$HAS_LINKED" == "false" ]]; then
