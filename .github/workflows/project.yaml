@@ -19,7 +19,7 @@ jobs:
           if: github.event_name == 'issues'
           env:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          run: gh issue add-label "${{ github.event.issue.number }}" --label "squad/qa"
+          run: gh issue edit "${{ github.event.issue.number }}" --add-label "squad/qa"
 
         - name: Set up Environment Variables
           if: github.event_name == 'pull_request'
@@ -55,7 +55,7 @@ jobs:
 
             if [[ "$HAS_LINKED" == "false" ]]; then
                 echo "No linked issues found for PR #$PR_NUMBER. Adding label 'squad/qa'."
-                gh issue add-label "$PR_NUMBER" --label "squad/qa"
+                gh pr edit $PR_NUMBER --add-label "squad/qa"
             else
                 echo "PR #$PR_NUMBER has linked issues. Skipping label addition."
             fi
