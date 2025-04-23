@@ -1,0 +1,87 @@
+name: Add Assigned Issues and PRs Without Linked Issues to Project Board
+
+on:
+  issues:
+    types:
+      - assigned
+
+jobs:
+    add_label:
+        name: Add Label
+        runs-on: ubuntu-latest
+        permissions:
+            issues: write
+            pull-requests: write
+        steps:
+        - name: Add squad/qa label to assigned issues
+          if: github.event_name == 'issues'
+          uses: actions/github-script@v7
+          with:
+            github-token: ${{ secrets.GITHUB_TOKEN }}
+            script: |
+                const issueNumber = context.payload.issue.number;
+                console.log(`Adding squad/qa label to issue #${issueNumber}`);
+                await github.rest.issues.addLabels({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber,
+                    labels: ['squad/qa']
+                });
+                console.log(`Label added to issue #${issueNumber}`);
+        - name: Check PR for Linked Issues and draft status
+          if: github.event_name == 'pull_request'
+          uses: actions/github-script@v7
+          id: check_linked_issue
+          with:
+            github-token: ${{ secrets.GITHUB_TOKEN }}
+            script: |
+                const { owner, repo } = context.repo;
+                const pull_number = context.payload.pull_request.number;
+
+                const { data: pullRequest } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number,
+                });
+
+                const linkedIssues = pullRequest.related_issues;
+                core.setOutput('has_linked_issue', linkedIssues && linkedIssues.length > 0 ? 'true' : 'false');
+                core.setOutput('pull_number', pull_number);
+                core.setOutput('pull_request_in_draft', pullRequest.draft)
+        - name: Add squad/qa label to pull request if it is not in draft
+          uses: actions/github-script@v7
+          if: github.event_name == 'pull_request' && steps.check_linked_issue.outputs.has_linked_issue == 'false'
+          with:
+            github-token: ${{ secrets.GITHUB_TOKEN }}
+            script: |
+                const pr = context.payload.pull_request;
+                const isDraft = pr.draft;
+    
+                console.log(`PR #${pr.number} is draft: ${isDraft}`);
+    
+                if (!isDraft) {
+                    console.log(`Adding squad/qa label to PR #${pr.number}`);
+                    await github.rest.issues.addLabels({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: pr.number,
+                    labels: ['squad/qa'],
+                    });
+                    console.log(`Added squad/qa label to PR #${pr.number}`);
+                } else {
+                    console.log(`PR #${pr.number} is a draft.  Not adding label.`);
+                }
+    add_to_project:
+        name: Add to Project Board
+        runs-on: ubuntu-latest
+        permissions:
+            issues: write
+            pull-requests: write
+        steps:
+            - name: Add to project if has squad/qa label
+              uses: actions/add-to-project@RELEASE_VERSION
+              with:
+                project-url: ${{ env.PROJECT_URL }}
+                column-name: In Progress # Adjust if needed
+                github-token: ${{ secrets.GITHUB_TOKEN }}
+                labeled: squad/qa  
