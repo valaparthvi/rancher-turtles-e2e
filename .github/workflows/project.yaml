@@ -41,7 +41,6 @@ jobs:
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           run: |
             PR_NUMBER=$(( ${{ github.event.pull_request.number }} ))
-            echo "DEBUG: PR_NUMBER is: '$PR_NUMBER'"
             HAS_LINKED=$(gh api graphql -f query='
                 query($owner: String!, $repo: String!, $number: Int!) {
                     repository(owner: $owner, name: $repo) {
@@ -59,6 +58,7 @@ jobs:
 
             if [[ "$HAS_LINKED" == "false" ]]; then
                 echo "No linked issues found for PR #$PR_NUMBER. Adding label 'squad/qa'."
+                echo "Project List: $(gh project list)"
                 gh pr edit $PR_NUMBER --add-label="squad/qa" --add-project="${{ env.PROJECT_NAME }}"
             else
                 echo "PR #$PR_NUMBER has linked issues. Skipping label addition."
