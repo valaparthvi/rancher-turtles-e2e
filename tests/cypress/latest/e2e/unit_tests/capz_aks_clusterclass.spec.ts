@@ -29,7 +29,7 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
 
   beforeEach(() => {
     cy.login();
-    cypressLib.burgerMenuToggle();
+    cy.burgerMenuOperate('open')
   });
 
   it('Setup the namespace for importing', () => {
@@ -118,7 +118,7 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
     cy.contains(clusterName).click();
 
     // Install Chart
-    cy.checkChart('Install', 'Monitoring', 'cattle-monitoring');
+    cy.checkChart('Install', 'Logging', 'cattle-logging-system');
   })
   );
 

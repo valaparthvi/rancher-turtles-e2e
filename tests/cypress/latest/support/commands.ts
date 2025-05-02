@@ -36,7 +36,7 @@ Cypress.Commands.add('namespaceAutoImport', (mode) => {
     .should('be.visible');
 
   // Select default namespace
-  cy.setNamespace('Project: Default');
+  cy.setNamespace('default');
   cy.setAutoImport(mode);
   cy.namespaceReset();
 });
@@ -71,7 +71,7 @@ Cypress.Commands.add('createNamespace', (namespace) => {
   cy.contains('local')
     .click();
   cypressLib.accesMenu('Projects/Namespaces');
-  cy.setNamespace('Not');
+  cy.setNamespace('Not', 'all_orphans');
 
   // Create namespace
   cy.contains('Create Namespace').click();
@@ -82,16 +82,24 @@ Cypress.Commands.add('createNamespace', (namespace) => {
 });
 
 // Command to set namespace selection
-// TODO(pvala): Could be improved to check if the namespace is already set before changing it
-Cypress.Commands.add('setNamespace', (namespace) => {
+Cypress.Commands.add('setNamespace', (namespace, namespaceID) => {
+  const nsID: string = namespaceID || (namespace.startsWith('Project:')) ? '' : `ns_${namespace}`
   cy.getBySel('namespaces-dropdown', { timeout: 18000 }).trigger('click');
   cy.get('.ns-clear').click();
-  cy.get('.ns-filter-input').type(namespace + '{enter}{esc}');
+  cy.get('.ns-options').within(() => {
+    if (nsID != '') {
+      cy.get(`div[id='${nsID}']`).click();
+    } else {
+      cy.contains('.ns-option', namespace).click();
+    }
+  });
+  cy.get('.ns-filter-input').type('{esc}');
+  cy.get('.ns-values').should('contain.text', namespace);
 });
 
 // Command to reset namespace selection to default 'Only User Namespaces'
 Cypress.Commands.add('namespaceReset', () => {
-  cy.setNamespace('Only User Namespaces');
+  cy.setNamespace('Only User Namespaces', 'all_user');
 });
 
 // Command to create CAPI cluster from Clusterclass (ui-extn: v0.8.2)
@@ -211,7 +219,7 @@ Cypress.Commands.add('checkCAPIClusterDeleted', (clusterName, timeout) => {
 // Command to check CAPI Menu is visible
 Cypress.Commands.add('checkCAPIMenu', () => {
   cy.goToHome();
-  cypressLib.burgerMenuToggle();
+  cy.burgerMenuOperate('open');
   cypressLib.accesMenu('Cluster Management');
   cy.get('.header').contains('CAPI').click();
   cy.wait(2000);
@@ -387,18 +395,20 @@ Cypress.Commands.add('addRepository', (repositoryName: string, repositoryURL: st
 // You can optionally provide an array of questions and answer them before the installation starts
 // Example1: cy.checkChart('Alerting', 'default', [{ menuEntry: '(None)', checkbox: 'Enable Microsoft Teams' }]);
 // Example2: cy.checkChart('Rancher Turtles', 'rancher-turtles-system', [{ menuEntry: 'Rancher Turtles Features Settings', checkbox: 'Seamless integration with Fleet and CAPI'},{ menuEntry: 'Rancher webhook cleanup settings', inputBoxTitle: 'Webhook Cleanup Image', inputBoxValue: 'registry.k8s.io/kubernetes/kubectl:v1.28.0'}]);
-Cypress.Commands.add('checkChart', (operation, chartName, namespace, version, questions) => {
+Cypress.Commands.add('checkChart', (operation, chartName, namespace, version, questions, refreshRepo = false) => {
   cy.get('.nav').contains('Apps').click();
 
   // Select All Repositries and click Action/Refresh
   cy.get('.nav').contains('Repositories').click();
   cy.waitForAllRowsInState('Active');
   cy.wait(500);
-  cy.get('div.checkbox-outer-container.check').click();
-  cy.wait(500);
-  cy.contains('Refresh').click();
-  cy.waitForAllRowsInState('Active');
-  cy.wait(1000);
+  if (refreshRepo && refreshRepo == true) {
+    cy.get('div.checkbox-outer-container.check').click();
+    cy.wait(500);
+    cy.contains('Refresh').click();
+    cy.waitForAllRowsInState('Active');
+    cy.wait(1000);
+  }
 
   cy.get('.nav').contains('Charts').click();
   cy.contains('Featured Charts').should('be.visible');
@@ -634,7 +644,7 @@ Cypress.Commands.add('addFleetGitRepo', (repoName, repoUrl, branch, paths, works
   cy.clickButton('Create');
 
   // Navigate to fleet repo
-  cypressLib.burgerMenuToggle();
+  cy.burgerMenuOperate('open');
   cy.checkFleetGitRepo(repoName, workspace); // Wait until the repo details are loaded
 })
 

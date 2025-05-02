@@ -28,7 +28,7 @@ describe('Create CAPD', { tags: '@short' }, () => {
 
   beforeEach(() => {
     cy.login();
-    cypressLib.burgerMenuToggle();
+    cy.burgerMenuOperate('open');
   });
 
   pathNames.forEach((path) => {
@@ -69,7 +69,7 @@ describe('Create CAPD', { tags: '@short' }, () => {
       // Click on imported CAPD cluster
       cy.contains(clusterName).click();
       // Install Chart
-      cy.checkChart('Install', 'Monitoring', 'cattle-monitoring');
+      cy.checkChart('Install', 'Monitoring', 'cattle-monitoring-system');
     })
 
 
@@ -90,6 +90,11 @@ describe('Create CAPD', { tags: '@short' }, () => {
             cy.deleteCluster(clusterName);
           }
         })
+      })
+
+      it('Delete the Kindnet Config Map', () => {
+        cy.deleteKubernetesResource('local', ['More Resources', 'Core', 'ConfigMaps'], "cni-docker-kubeadm-example-crs-0", 'default');
+        cy.deleteKubernetesResource('local', ['More Resources', 'Cluster Provisioning', 'ClusterResourceSets'], "docker-kubeadm-example-crs-0", 'default');
       })
     }
   })

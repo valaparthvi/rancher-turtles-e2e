@@ -15,7 +15,7 @@ describe('Import CAPA EKS', { tags: '@full' }, () => {
 
   beforeEach(() => {
     cy.login();
-    cypressLib.burgerMenuToggle();
+    cy.burgerMenuOperate('open');
   });
 
   it('Setup the namespace for importing', () => {
@@ -59,7 +59,7 @@ describe('Import CAPA EKS', { tags: '@full' }, () => {
       cy.contains(clusterName).click();
 
       // Install Chart
-      cy.checkChart('Install', 'Monitoring', 'cattle-monitoring');
+      cy.checkChart('Install', 'Monitoring', 'cattle-monitoring-system');
     })
   );
 

@@ -22,7 +22,7 @@ describe('Import/Create CAPZ', { tags: '@full' }, () => {
 
   beforeEach(() => {
     cy.login();
-    cypressLib.burgerMenuToggle();
+    cy.burgerMenuOperate('open');
   });
 
   it('Setup the namespace for importing', () => {
@@ -72,7 +72,7 @@ describe('Import/Create CAPZ', { tags: '@full' }, () => {
     cy.contains(clusterName).click();
 
     // Install Chart
-    cy.checkChart('Install', 'Monitoring', 'cattle-monitoring');
+    cy.checkChart('Install', 'Logging', 'cattle-logging-system');
   })
   );
 
@@ -99,13 +99,19 @@ describe('Import/Create CAPZ', { tags: '@full' }, () => {
       // Wait until the following returns no clusters found
       // This is checked by ensuring the cluster is not available in CAPI menu
       cy.checkCAPIClusterDeleted(clusterName, timeout);
-
-      // Delete secret and AzureClusterIdentity
-      cy.deleteKubernetesResource('local', ['More Resources', 'Core', 'Secrets'], "azure-creds-secret", namespace)
-      cy.deleteKubernetesResource('local', ['More Resources', 'Cluster Provisioning', 'AzureClusterIdentities'], 'cluster-identity', 'default')
-      cy.deleteKubernetesResource('local', ['More Resources', 'Core', 'Secrets'], "cluster-identity-secret", namespace)
     })
     );
+
+    it('Delete the secrets', () => {
+      ["azure-creds-secret", "cluster-identity-secret"].forEach((resourceName) => {
+        cy.deleteKubernetesResource('local', ['More Resources', 'Core', 'Secrets'], resourceName, namespace)
+      })
+    })
+
+    it('Delete AzureClusterIdentities resource', { retries: 1 }, () => {
+      // This test can be flaky, so it is in a separate test.
+      cy.deleteKubernetesResource('local', ['More Resources', 'Cluster Provisioning', 'AzureClusterIdentities'], 'cluster-identity', 'default')
+    })
   }
 
 });

@@ -35,11 +35,11 @@ declare global {
       waitForAllRowsInState(desiredState: string, timeout?: number): Chainable<Element>;
       accesMenuSelection(menuPaths: string[]): Chainable<Element>;
       burgerMenuOperate(operation: 'open' | 'close'): Chainable<Element>;
-      checkChart(operation: string, chartName: string, namespace: string, version?: string, questions?: any): Chainable<Element>;
+      checkChart(operation: string, chartName: string, namespace: string, version?: string, questions?: any, refreshRepo?: boolean): Chainable<Element>;
       deleteCluster(clusterName: string): Chainable<Element>;
       searchCluster(clusterName: string): Chainable<Element>;
       createNamespace(namespace: string): Chainable<Element>;
-      setNamespace(namespace: string): Chainable<Element>;
+      setNamespace(namespace: string, namespaceID?: string): Chainable<Element>;
       createCAPICluster(className: string, clusterName: string, machines: Record<string, string>, k8sVersion: string, podCIDR: string, serviceCIDR?: string, extraVariables?: ClusterClassVariablesInput[]): Chainable<Element>;
       checkCAPICluster(clustername: string): Chainable<Element>;
       checkCAPIClusterClass(classname: string): Chainable<Element>;

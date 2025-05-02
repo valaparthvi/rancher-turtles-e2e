@@ -32,7 +32,7 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
 
   beforeEach(() => {
     cy.login();
-    cypressLib.burgerMenuToggle();
+    cy.burgerMenuOperate('open');
   });
 
   pathNames.forEach((path) => {
@@ -117,7 +117,7 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
           // Click on imported CAPD cluster
           cy.contains(clusterName).click();
           // Install Chart
-          cy.checkChart('Install', 'Monitoring', 'cattle-monitoring');
+          cy.checkChart('Install', 'Monitoring', 'cattle-monitoring-system');
         })
       );
 
