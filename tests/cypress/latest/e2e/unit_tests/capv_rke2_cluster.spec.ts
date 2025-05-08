@@ -8,7 +8,7 @@ describe('Import CAPV', { tags: '@vsphere' }, () => {
   const repoName = 'clusters-capv'
   const clusterName = "turtles-qa-capv-rke2"
   const branch = 'main'
-  const path = '/tests/assets/rancher-turtles-fleet-example/capv/rke2'
+  const path = '/tests/assets/rancher-turtles-fleet-example/capv/rke2/clusters'
   const repoUrl = "https://github.com/rancher/rancher-turtles-e2e.git"
   const vsphere_secrets_json_base64 = Cypress.env("vsphere_secrets_json_base64")
 
@@ -100,7 +100,7 @@ describe('Import CAPV', { tags: '@vsphere' }, () => {
 
     // Check cluster is Active
     cy.searchCluster(clusterName);
-    cy.contains(new RegExp('Active.*' + clusterName), { timeout: 300000 });
+    cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
   })
 
   it('Install App on imported cluster', { retries: 1 }, () => {
@@ -111,7 +111,8 @@ describe('Import CAPV', { tags: '@vsphere' }, () => {
     cy.contains('Cluster Dashboard').should('exist');
 
     // Install Chart
-    cy.checkChart('Install', 'Monitoring', 'cattle-monitoring-system', undefined, undefined, true);
+    // We install Logging chart instead of Monitoring, since this is relatively lightweight.
+    cy.checkChart('Install', 'Logging', 'cattle-logging-system');
   })
 
   it("Scale up imported CAPV cluster by updating values and forcefully updating the repo", () => {

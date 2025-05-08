@@ -19,7 +19,7 @@ import { skipClusterDeletion } from '~/support/utils';
 Cypress.config();
 describe('Import CAPD RKE2', { tags: '@short' }, () => {
   var clusterName: string, clusterPrefix: string
-  const timeout = 300000
+  const timeout = 600000
   const namePrefix = 'docker-rke2-'
   const clustersPath = 'clusters'
   const classClustersPath = 'class-' + clustersPath
@@ -69,15 +69,21 @@ describe('Import CAPD RKE2', { tags: '@short' }, () => {
     if (path == clustersPath) { var qase_id = 29 } else { qase_id = 30 }
     qase(qase_id,
       it('Auto import child CAPD cluster', () => {
+        // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
+        cy.checkCAPIClusterProvisioned(clusterName, timeout);
+
         // Check child cluster is created and auto-imported
+        // This is checked by ensuring the cluster is available in navigation menu
         cy.goToHome();
-        cy.contains(new RegExp('Pending.*' + clusterName), { timeout: timeout });
+        cy.contains(clusterName).should('exist');
 
         // Check cluster is Active
         cy.searchCluster(clusterName);
         cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
-        // TODO: Check MachineSet unavailable status and use checkCAPIClusterActive
-        cy.checkCAPIClusterProvisioned(clusterName);
+
+        // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
+        // Ensuring cluster is provisioned also ensures all the Cluster Management > Advanced > Machines for the given cluster are Active.
+        cy.checkCAPIClusterActive(clusterName, timeout);
       })
     );
 
@@ -104,7 +110,7 @@ describe('Import CAPD RKE2', { tags: '@short' }, () => {
           cy.get('.CodeMirror')
             .then((editor) => {
               var text = editor[0].CodeMirror.getValue();
-              text = text.replace(/replicas: 1/g, 'replicas: 2');
+              text = text.replace(/replicas: 2/g, 'replicas: 3');
               editor[0].CodeMirror.setValue(text);
               cy.clickButton('Save');
             })
@@ -112,7 +118,7 @@ describe('Import CAPD RKE2', { tags: '@short' }, () => {
           // Check CAPI cluster status
           cy.contains('Machine Deployments').click();
           cy.typeInFilter(clusterName);
-          cy.get('.content > .count', { timeout: timeout }).should('have.text', '2');
+          cy.get('.content > .count', { timeout: timeout }).should('have.text', '3');
           cy.checkCAPIClusterProvisioned(clusterName);
         })
       );

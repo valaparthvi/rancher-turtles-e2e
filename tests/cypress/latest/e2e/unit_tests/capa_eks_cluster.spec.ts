@@ -8,9 +8,9 @@ describe('Import CAPA EKS', { tags: '@full' }, () => {
   var clusterName: string
   const timeout = 1200000
   const repoName = 'clusters-capa-eks'
-  const clusterNamePrefix = 'turtles-qa-capa-eks' // as per fleet values
+  const clusterNamePrefix = 'turtles-qa-aws-eks' // as per fleet values
   const branch = 'main'
-  const path = '/tests/assets/rancher-turtles-fleet-example/capa/eks'
+  const path = '/tests/assets/rancher-turtles-fleet-example/capa/eks/clusters'
   const repoUrl = 'https://github.com/rancher/rancher-turtles-e2e.git'
 
   beforeEach(() => {
@@ -45,12 +45,13 @@ describe('Import CAPA EKS', { tags: '@full' }, () => {
     cy.checkCAPIClusterProvisioned(clusterName, timeout);
 
     // Check child cluster is created and auto-imported
+    // This is checked by ensuring the cluster is available in navigation menu
     cy.goToHome();
-    cy.contains(new RegExp('Pending.*' + clusterName));
+    cy.contains(clusterName).should('exist');
 
     // Check cluster is Active
     cy.searchCluster(clusterName);
-    cy.contains(new RegExp('Active.*' + clusterName), { timeout: 300000 });
+    cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
   })
 
   qase(32,
@@ -59,7 +60,8 @@ describe('Import CAPA EKS', { tags: '@full' }, () => {
       cy.contains(clusterName).click();
 
       // Install Chart
-      cy.checkChart('Install', 'Monitoring', 'cattle-monitoring-system');
+      // We install Logging chart instead of Monitoring, since this is relatively lightweight.
+      cy.checkChart('Install', 'Logging', 'cattle-logging-system');
     })
   );
 

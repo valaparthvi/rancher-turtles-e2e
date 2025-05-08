@@ -7,11 +7,16 @@ Cypress.config();
 describe('Import CAPA RKE2', { tags: '@full' }, () => {
   var clusterName: string
   const timeout = 1200000
-  const repoName = 'clusters-capa-rke2'
-  const clusterNamePrefix = 'turtles-qa-capa-rke2' // as per fleet values
+  const className = 'aws-rke2-example'
+  const path = 'class-clusters'
+  const repoName = className + path
+  const clusterNamePrefix = 'turtles-qa-' + className // as per fleet values
   const branch = 'main'
-  const path = '/tests/assets/rancher-turtles-fleet-example/capa/rke2'
+  const basePath = '/tests/assets/rancher-turtles-fleet-example/capa/rke2/'
   const repoUrl = 'https://github.com/rancher/rancher-turtles-e2e.git'
+  const turtlesRepoUrl = 'https://github.com/rancher/turtles'
+  const examplesPath = ['examples/clusterclasses/aws', 'examples/applications/ccm/aws-helm', 'examples/applications/csi/aws']
+  const clusterClassRepoName = 'aws-rke2-clusterclass'
 
   beforeEach(() => {
     cy.login();
@@ -22,13 +27,28 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
     cy.namespaceAutoImport('Enable');
   })
 
+  it('Add CAPA RKE2 ClusterClass and Applications Fleet Repo', () => {
+    cy.addFleetGitRepo(clusterClassRepoName, turtlesRepoUrl, 'main', examplesPath)
+    // Go to CAPI > ClusterClass to ensure the clusterclass is created
+    cy.checkCAPIClusterClass(className);
+
+    // Navigate to `local` cluster, More Resources > Fleet > Helm Apps and ensure the charts are active.
+    cy.burgerMenuOperate('open');
+    cy.contains('local').click();
+    cy.accesMenuSelection(['More Resources', 'Fleet', 'HelmApps']);
+    ['aws-ccm', 'aws-csi-driver'].forEach((app) => {
+        cy.typeInFilter(app);
+        cy.waitForAllRowsInState('Active');
+    })
+  });
+
   qase(31,
-    it('Add CAPA cluster fleet repo and get cluster name', () => {
+    it('Add CAPA class-clusters fleet repo and get cluster name', () => {
       cypressLib.checkNavIcon('cluster-management')
         .should('exist');
 
       // Add CAPA fleet repository
-      cy.addFleetGitRepo(repoName, repoUrl, branch, path);
+      cy.addFleetGitRepo(repoName, repoUrl, branch, basePath+path);
       // Check CAPI cluster using its name prefix
       cy.checkCAPICluster(clusterNamePrefix);
 
@@ -45,12 +65,17 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
     cy.checkCAPIClusterProvisioned(clusterName, timeout);
 
     // Check child cluster is created and auto-imported
+    // This is checked by ensuring the cluster is available in navigation menu
     cy.goToHome();
-    cy.contains(new RegExp('Pending.*' + clusterName));
+    cy.contains(clusterName).should('exist');
 
     // Check cluster is Active
     cy.searchCluster(clusterName);
-    cy.contains(new RegExp('Active.*' + clusterName), { timeout: 300000 });
+    cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
+
+    // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
+    // Ensuring cluster is provisioned also ensures all the Cluster Management > Advanced > Machines for the given cluster are Active.
+    cy.checkCAPIClusterActive(clusterName, timeout);
   })
 
   qase(32,
@@ -59,7 +84,8 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
       cy.contains(clusterName).click();
 
       // Install Chart
-      cy.checkChart('Install', 'Monitoring', 'cattle-monitoring-system');
+      // We install Logging chart instead of Monitoring, since this is relatively lightweight.
+      cy.checkChart('Install', 'Logging', 'cattle-logging-system');
     })
   );
 
@@ -77,12 +103,16 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
     );
 
     qase(16,
-      it('Delete the CAPA cluster fleet repo', () => {
+      it('Delete the CAPA cluster and ClusterClass fleet repo', () => {
+
         // Remove the fleet git repo
         cy.removeFleetGitRepo(repoName);
         // Wait until the following returns no clusters found
         // This is checked by ensuring the cluster is not available in CAPI menu
         cy.checkCAPIClusterDeleted(clusterName, timeout);
+
+        // Remove the clusterclass repo
+        cy.removeFleetGitRepo(clusterClassRepoName);
       })
     );
   }

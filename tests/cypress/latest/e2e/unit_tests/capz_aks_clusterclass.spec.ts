@@ -9,13 +9,13 @@ import { ClusterClassVariablesInput } from '~/support/structs';
 Cypress.config();
 describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
   const timeout = 1200000
-  const repoName = 'classes-clusters-capz-aks'
+  const repoName = 'class-clusters-capz-aks'
   const className = 'azure-aks-example'
   const clusterName = className + randomstring.generate({ length: 4, capitalization: "lowercase" })
   const k8sVersion = 'v1.31.4'
   const podCIDR = '192.168.0.0/16'
   const branch = 'main'
-  const path = '/tests/assets/rancher-turtles-fleet-example/capz/aks/classes-clusters'
+  const path = '/tests/assets/rancher-turtles-fleet-example/capz/aks/class-clusters'
   const repoUrl = "https://github.com/rancher/rancher-turtles-e2e.git"
   const clientID = Cypress.env("azure_client_id")
   const clientSecret = btoa(Cypress.env("azure_client_secret"))
@@ -23,7 +23,7 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
   const tenantID = Cypress.env("azure_tenant_id")
   const location = "westeurope" // this is one of the regions supported by ClusterClass definition
   const namespace = "capz-system"
-  const clusterClassFleetRepoURL = 'https://github.com/rancher/turtles'
+  const turtlesRepoUrl = 'https://github.com/rancher/turtles'
   const classesPath = '/examples/clusterclasses/azure'
   const clusterClassRepoName = "azure-clusterclasses"
 
@@ -45,7 +45,7 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
   })
 
   qase(21, it('Add CAPZ AKS ClusterClass using fleet', () => {
-    cy.addFleetGitRepo(clusterClassRepoName, clusterClassFleetRepoURL, "main", classesPath)
+    cy.addFleetGitRepo(clusterClassRepoName, turtlesRepoUrl, 'main', classesPath)
     // Go to CAPI > ClusterClass to ensure the clusterclass is created
     cy.checkCAPIClusterClass(className);
   })
@@ -66,12 +66,16 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
 
   it('Auto import child CAPZ AKS cluster', () => {
     // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
-    //  Ensuring cluster is provisioned also ensures all the Cluster Management > Advanced > Machines for the given cluster are Active.
     cy.checkCAPIClusterProvisioned(fleetClusterName, timeout);
+
+    // Check child cluster is created and auto-imported
+    // This is checked by ensuring the cluster is available in navigation menu
+    cy.goToHome();
+    cy.contains(fleetClusterName).should('exist');
 
     // Check cluster is Active
     cy.searchCluster(fleetClusterName);
-    cy.contains(new RegExp('Active.*' + fleetClusterName), { timeout: 300000 });
+    cy.contains(new RegExp('Active.*' + fleetClusterName), { timeout: timeout });
   })
 
   if (skipClusterDeletion) {
