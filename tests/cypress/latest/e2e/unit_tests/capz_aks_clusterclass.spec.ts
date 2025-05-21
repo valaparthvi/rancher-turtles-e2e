@@ -1,31 +1,31 @@
 import '~/support/commands';
 
-import * as cypressLib from '@rancher-ecp-qa/cypress-library';
 import * as randomstring from "randomstring";
 import { qase } from 'cypress-qase-reporter/dist/mocha';
 import { skipClusterDeletion } from '~/support/utils';
 import { ClusterClassVariablesInput } from '~/support/structs';
 
 Cypress.config();
-describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
+describe('Import/Create CAPZ AKS Class-Cluster', { tags: '@full' }, () => {
   const timeout = 1200000
-  const repoName = 'class-clusters-capz-aks'
+  const repoName = 'class-clusters-azure-aks'
   const className = 'azure-aks-example'
-  const clusterName = className + randomstring.generate({ length: 4, capitalization: "lowercase" })
+  const clusterName = 'turtles-qa-' + className + randomstring.generate({ length: 4, capitalization: "lowercase" })
   const k8sVersion = 'v1.31.4'
   const podCIDR = '192.168.0.0/16'
-  const branch = 'main'
+  const branch = 'qase-ids'
   const path = '/tests/assets/rancher-turtles-fleet-example/capz/aks/class-clusters'
   const repoUrl = "https://github.com/rancher/rancher-turtles-e2e.git"
+  const location = "westeurope" // this is one of the regions supported by ClusterClass definition
+  const namespace = "capz-system"
+  const turtlesRepoUrl = 'https://github.com/rancher/turtles'
+  const classesPath = 'examples/clusterclasses/azure/aks'
+  const clusterClassRepoName = "azure-aks-clusterclass"
+
   const clientID = Cypress.env("azure_client_id")
   const clientSecret = btoa(Cypress.env("azure_client_secret"))
   const subscriptionID = Cypress.env("azure_subscription_id")
   const tenantID = Cypress.env("azure_tenant_id")
-  const location = "westeurope" // this is one of the regions supported by ClusterClass definition
-  const namespace = "capz-system"
-  const turtlesRepoUrl = 'https://github.com/rancher/turtles'
-  const classesPath = '/examples/clusterclasses/azure'
-  const clusterClassRepoName = "azure-clusterclasses"
 
   beforeEach(() => {
     cy.login();
@@ -37,14 +37,14 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
   })
 
   it('Create values.yaml Secret', () => {
-    cy.createCAPZValuesSecret(location, clientID, tenantID, subscriptionID, k8sVersion, undefined, 1, 1)
+    cy.createCAPZValuesSecret(clientID, tenantID, subscriptionID);
   })
 
   it('Create AzureClusterIdentity', () => {
-    cy.createAzureClusterIdentity(clientSecret, clientID, tenantID)
+    cy.createAzureClusterIdentity(clientID, tenantID, clientSecret);
   })
 
-  qase(21, it('Add CAPZ AKS ClusterClass using fleet', () => {
+  qase(84, it('Add CAPZ AKS ClusterClass using fleet', () => {
     cy.addFleetGitRepo(clusterClassRepoName, turtlesRepoUrl, 'main', classesPath)
     // Go to CAPI > ClusterClass to ensure the clusterclass is created
     cy.checkCAPIClusterClass(className);
@@ -52,7 +52,7 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
   );
 
   var fleetClusterName: string;
-  it('Add GitRepo for cluster and get cluster name', () => {
+  qase(55, it('Add GitRepo for cluster and get cluster name', () => {
     cy.addFleetGitRepo(repoName, repoUrl, branch, path);
     // Check CAPI cluster using its name prefix i.e. className
     cy.checkCAPICluster(className);
@@ -63,8 +63,9 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
       cy.log('CAPI Cluster Name:', fleetClusterName);
     });
   })
+  );
 
-  it('Auto import child CAPZ AKS cluster', () => {
+  qase(56, it('Auto import child CAPZ AKS cluster', () => {
     // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
     cy.checkCAPIClusterProvisioned(fleetClusterName, timeout);
 
@@ -77,9 +78,10 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
     cy.searchCluster(fleetClusterName);
     cy.contains(new RegExp('Active.*' + fleetClusterName), { timeout: timeout });
   })
+  );
 
   if (skipClusterDeletion) {
-    it('Delete the imported cluster and remove the fleet repo', () => {
+    qase(60, it('Delete the imported cluster and remove the fleet repo', () => {
       // Check cluster is not deleted after removal
       cy.deleteCluster(fleetClusterName);
       cy.goToHome();
@@ -95,10 +97,10 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
       cy.checkCAPIClusterDeleted(fleetClusterName, timeout);
 
     })
+    );
   }
 
-
-  qase(45, it('Create CAPZ from Clusterclass via UI', () => {
+  qase(45, it('Create CAPZ AKS from Clusterclass via UI', () => {
     // Create cluster from Clusterclass UI
     const machines: Record<string, string> = { 'mp-system': 'default-system', 'mp-worker': 'default-worker' }
     const extraVariables: ClusterClassVariablesInput[] = [
@@ -117,7 +119,7 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
   })
   );
 
-  qase(23, it('Install App on imported cluster', { retries: 1 }, () => {
+  qase(57, it('Install App on imported cluster', { retries: 1 }, () => {
     // Click on imported CAPZ cluster
     cy.contains(clusterName).click();
 
@@ -127,7 +129,7 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
   );
 
   if (skipClusterDeletion) {
-    qase(25, it('Remove created CAPZ cluster from Rancher Manager and Delete the CAPZ cluster', { retries: 1 }, () => {
+    qase(89, it('Remove created CAPZ cluster from Rancher Manager and Delete the CAPZ cluster', { retries: 1 }, () => {
       // Check cluster is not deleted after removal
       cy.deleteCluster(clusterName);
       cy.goToHome();
@@ -141,7 +143,7 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
     })
     );
 
-    qase(26, it('Delete the CAPZ clusterclasses fleet repo and other resources', () => {
+    it('Delete the CAPZ clusterclasses fleet repo and other resources', () => {
       // Remove the clusterclass repo
       cy.removeFleetGitRepo(clusterClassRepoName);
 
@@ -150,7 +152,6 @@ describe('Import/Create CAPZ AKS with ClusterClass', { tags: '@full' }, () => {
       cy.deleteKubernetesResource('local', ['More Resources', 'Cluster Provisioning', 'AzureClusterIdentities'], 'cluster-identity', 'default')
       cy.deleteKubernetesResource('local', ['More Resources', 'Core', 'Secrets'], "cluster-identity-secret", namespace)
     })
-    );
   }
 
 });

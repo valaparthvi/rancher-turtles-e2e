@@ -4,12 +4,12 @@ import { qase } from 'cypress-qase-reporter/dist/mocha';
 import { skipClusterDeletion } from '~/support/utils';
 
 Cypress.config();
-describe('Import CAPA EKS', { tags: '@full' }, () => {
+describe('Import CAPA EKS Cluster', { tags: '@full' }, () => {
   var clusterName: string
   const timeout = 1200000
-  const repoName = 'clusters-capa-eks'
+  const repoName = 'clusters-aws-eks'
   const clusterNamePrefix = 'turtles-qa-aws-eks' // as per fleet values
-  const branch = 'main'
+  const branch = 'qase-ids'
   const path = '/tests/assets/rancher-turtles-fleet-example/capa/eks/clusters'
   const repoUrl = 'https://github.com/rancher/rancher-turtles-e2e.git'
 
@@ -40,19 +40,21 @@ describe('Import CAPA EKS', { tags: '@full' }, () => {
     })
   );
 
-  it('Auto import child CAPA cluster', () => {
-    // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
-    cy.checkCAPIClusterProvisioned(clusterName, timeout);
+  qase(105,
+    it('Auto import child CAPA cluster', () => {
+      // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
+      cy.checkCAPIClusterProvisioned(clusterName, timeout);
 
-    // Check child cluster is created and auto-imported
-    // This is checked by ensuring the cluster is available in navigation menu
-    cy.goToHome();
-    cy.contains(clusterName).should('exist');
+      // Check child cluster is created and auto-imported
+      // This is checked by ensuring the cluster is available in navigation menu
+      cy.goToHome();
+      cy.contains(clusterName).should('exist');
 
-    // Check cluster is Active
-    cy.searchCluster(clusterName);
-    cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
-  })
+      // Check cluster is Active
+      cy.searchCluster(clusterName);
+      cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
+    })
+  );
 
   qase(32,
     it('Install App on imported cluster', { retries: 1 }, () => {

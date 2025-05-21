@@ -4,18 +4,16 @@ import { qase } from 'cypress-qase-reporter/dist/mocha';
 import { skipClusterDeletion } from '~/support/utils';
 
 Cypress.config();
-describe('Import CAPA RKE2', { tags: '@full' }, () => {
+describe('Import CAPA RKE2 Class-Cluster', { tags: '@full' }, () => {
   var clusterName: string
   const timeout = 1200000
   const className = 'aws-rke2-example'
-  const path = 'class-clusters'
-  const repoName = className + path
-  const clusterNamePrefix = 'turtles-qa-' + className // as per fleet values
-  const branch = 'main'
-  const basePath = '/tests/assets/rancher-turtles-fleet-example/capa/rke2/'
+  const repoName = 'class-clusters-aws-rke2'
+  const branch = 'qase-ids'
+  const path = '/tests/assets/rancher-turtles-fleet-example/capa/rke2/class-clusters'
   const repoUrl = 'https://github.com/rancher/rancher-turtles-e2e.git'
   const turtlesRepoUrl = 'https://github.com/rancher/turtles'
-  const examplesPath = ['examples/clusterclasses/aws', 'examples/applications/ccm/aws-helm', 'examples/applications/csi/aws']
+  const examplesPath = ['examples/clusterclasses/aws/rke2', 'examples/applications/ccm/aws', 'examples/applications/csi/aws']
   const clusterClassRepoName = 'aws-rke2-clusterclass'
 
   beforeEach(() => {
@@ -27,30 +25,32 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
     cy.namespaceAutoImport('Enable');
   })
 
-  it('Add CAPA RKE2 ClusterClass and Applications Fleet Repo', () => {
-    cy.addFleetGitRepo(clusterClassRepoName, turtlesRepoUrl, 'main', examplesPath)
-    // Go to CAPI > ClusterClass to ensure the clusterclass is created
-    cy.checkCAPIClusterClass(className);
+  qase(116,
+    it('Add CAPA RKE2 ClusterClass and Applications Fleet Repo', () => {
+      cy.addFleetGitRepo(clusterClassRepoName, turtlesRepoUrl, 'main', examplesPath)
+      // Go to CAPI > ClusterClass to ensure the clusterclass is created
+      cy.checkCAPIClusterClass(className);
 
-    // Navigate to `local` cluster, More Resources > Fleet > Helm Apps and ensure the charts are active.
-    cy.burgerMenuOperate('open');
-    cy.contains('local').click();
-    cy.accesMenuSelection(['More Resources', 'Fleet', 'HelmApps']);
-    ['aws-ccm', 'aws-csi-driver'].forEach((app) => {
-        cy.typeInFilter(app);
-        cy.waitForAllRowsInState('Active');
+      // Navigate to `local` cluster, More Resources > Fleet > Helm Apps and ensure the charts are active.
+      cy.burgerMenuOperate('open');
+      cy.contains('local').click();
+      cy.accesMenuSelection(['More Resources', 'Fleet', 'HelmApps']);
+      ['aws-ccm', 'aws-csi-driver'].forEach((app) => {
+          cy.typeInFilter(app);
+          cy.waitForAllRowsInState('Active');
+      })
     })
-  });
+  );
 
-  qase(31,
+  qase(110,
     it('Add CAPA class-clusters fleet repo and get cluster name', () => {
       cypressLib.checkNavIcon('cluster-management')
         .should('exist');
 
       // Add CAPA fleet repository
-      cy.addFleetGitRepo(repoName, repoUrl, branch, basePath+path);
-      // Check CAPI cluster using its name prefix
-      cy.checkCAPICluster(clusterNamePrefix);
+      cy.addFleetGitRepo(repoName, repoUrl, branch, path);
+    // Check CAPI cluster using its name prefix i.e. className
+      cy.checkCAPICluster(className);
 
       // Get the cluster name by its prefix and use it across the test
       cy.getBySel('sortable-cell-0-1').then(($cell) => {
@@ -60,25 +60,27 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
     })
   );
 
-  it('Auto import child CAPA cluster', () => {
-    // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
-    cy.checkCAPIClusterProvisioned(clusterName, timeout);
+  qase(111,
+    it('Auto import child CAPA cluster', () => {
+      // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
+      cy.checkCAPIClusterProvisioned(clusterName, timeout);
 
-    // Check child cluster is created and auto-imported
-    // This is checked by ensuring the cluster is available in navigation menu
-    cy.goToHome();
-    cy.contains(clusterName).should('exist');
+      // Check child cluster is created and auto-imported
+      // This is checked by ensuring the cluster is available in navigation menu
+      cy.goToHome();
+      cy.contains(clusterName).should('exist');
 
-    // Check cluster is Active
-    cy.searchCluster(clusterName);
-    cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
+      // Check cluster is Active
+      cy.searchCluster(clusterName);
+      cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
 
-    // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
-    // Ensuring cluster is provisioned also ensures all the Cluster Management > Advanced > Machines for the given cluster are Active.
-    cy.checkCAPIClusterActive(clusterName, timeout);
-  })
+      // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
+      // Ensuring cluster is provisioned also ensures all the Cluster Management > Advanced > Machines for the given cluster are Active.
+      cy.checkCAPIClusterActive(clusterName, timeout);
+    })
+  );
 
-  qase(32,
+  qase(112,
     it('Install App on imported cluster', { retries: 1 }, () => {
       // Click on imported CAPA cluster
       cy.contains(clusterName).click();
@@ -90,7 +92,7 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
   );
 
   if (skipClusterDeletion) {
-    qase(15,
+    qase(114,
       it('Remove imported CAPA cluster from Rancher Manager', { retries: 1 }, () => {
         // Check cluster is not deleted after removal
         cy.deleteCluster(clusterName);
@@ -102,9 +104,8 @@ describe('Import CAPA RKE2', { tags: '@full' }, () => {
       })
     );
 
-    qase(16,
+    qase(115,
       it('Delete the CAPA cluster and ClusterClass fleet repo', () => {
-
         // Remove the fleet git repo
         cy.removeFleetGitRepo(repoName);
         // Wait until the following returns no clusters found
