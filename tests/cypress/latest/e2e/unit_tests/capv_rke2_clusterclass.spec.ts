@@ -48,6 +48,11 @@ describe('Import CAPV RKE2 Class-Cluster', { tags: '@vsphere' }, () => {
       data = data.replace(/replace_vsphere_kubeadm_template/g, JSON.stringify(vsphere_secrets_json.vsphere_kubeadm_template))
       data = data.replace(/replace_vsphere_ssh_authorized_key/g, JSON.stringify(vsphere_secrets_json.vsphere_ssh_authorized_key))
       data = data.replace(/replace_vsphere_tls_thumbprint/g, JSON.stringify(vsphere_secrets_json.vsphere_tls_thumbprint))
+      // This is not mandatory field, usable for SLE only
+      if (vsphere_secrets_json.cluster_product_key) {
+        const productKeyValue = vsphere_secrets_json.cluster_product_key
+        data = data.replace(/product_key: ""/, `product_key: "${productKeyValue}"`);
+      }
       // Placeholder 'replace_cluster_control_plane_endpoint_ip' is already replaced at workflow level
       // Anyway it might be helpful for local runs when capv-helm-values.yaml is not modified by the workflow
       if (data.includes('replace_cluster_control_plane_endpoint_ip')) {
