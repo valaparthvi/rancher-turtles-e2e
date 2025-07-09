@@ -187,7 +187,7 @@ Cypress.Commands.add('checkCAPIClusterClass', (className) => {
 });
 
 // Command to check CAPI cluster Active status
-Cypress.Commands.add('checkCAPIClusterActive', (clusterName, timeout = 90000 ) => {
+Cypress.Commands.add('checkCAPIClusterActive', (clusterName, timeout = 90000) => {
   cy.checkCAPIMenu();
   cy.contains(new RegExp('Provisioned.*' + clusterName), { timeout: timeout });
   cy.contains('Machine Deployments').click();
@@ -445,12 +445,12 @@ Cypress.Commands.add('checkChart', (operation, chartName, namespace, version, qu
     cy.contains(version).click();
     cy.url().should("contain", version)
   }
-  
+
   cy.get('body').invoke('text').then((bodyText) => {
     if (bodyText.includes('Current')) {
       cy.contains('Current').click();
     }
-  });  
+  });
 
   cy.getBySel('btn-chart-install').click();
   cy.contains(operation + ': Step 1')
@@ -795,63 +795,32 @@ Cypress.Commands.add('exploreCluster', (clusterName: string) => {
 Cypress.Commands.add('createVSphereClusterIdentity', (vsphere_username, vsphere_password) => {
   cy.goToHome();
   cy.burgerMenuOperate('open');
-  cy.contains('local')
-      .click();
-  cy.get('.header-buttons > :nth-child(1) > .icon')
-      .click();
-  cy.contains('Import YAML');
-
   cy.readFile('./fixtures/capv-vsphere-cluster-identity.yaml').then((data) => {
-      cy.get('.CodeMirror')
-          .then((editor) => {
-              data = data.replace(/replace_vsphere_username/g, btoa(vsphere_username))
-              data = data.replace(/replace_vsphere_password/g, btoa(vsphere_password))
-              editor[0].CodeMirror.setValue(data);
-          })
+    data = data.replace(/replace_vsphere_username/g, btoa(vsphere_username))
+    data = data.replace(/replace_vsphere_password/g, btoa(vsphere_password))
+    cy.importYAML(data)
   });
-  cy.clickButton('Import');
-  cy.clickButton('Close');
 });
 
 // Create AWSClusterStaticIdentity
 Cypress.Commands.add('createAWSClusterStaticIdentity', (accessKey, secretKey) => {
   cy.goToHome();
   cy.burgerMenuOperate('open');
-  cy.contains('local')
-      .click();
-  cy.get('.header-buttons > :nth-child(1) > .icon')
-      .click();
-  cy.contains('Import YAML');
 
   cy.readFile('./fixtures/capa-aws-cluster-identity.yaml').then((data) => {
-      cy.get('.CodeMirror')
-          .then((editor) => {
-              data = data.replace(/replace_access_key_id/g, accessKey)
-              data = data.replace(/replace_secret_access_key/g, secretKey)
-              editor[0].CodeMirror.setValue(data);
-          })
+    data = data.replace(/replace_access_key_id/g, accessKey)
+    data = data.replace(/replace_secret_access_key/g, secretKey)
+    cy.importYAML(data)
   });
-  cy.clickButton('Import');
-  cy.clickButton('Close');
 });
 
 // Create CAPIProvider using YAML
 Cypress.Commands.add('createCAPIProvider', (providerName) => {
   cy.goToHome();
   cy.burgerMenuOperate('open');
-  cy.contains('local')
-    .click();
-  cy.get('.header-buttons > :nth-child(1) > .icon')
-    .click();
-  cy.contains('Import YAML');
   cy.readFile('./fixtures/capi-' + providerName + '-provider.yaml').then((data) => {
-    cy.get('.CodeMirror')
-        .then((editor) => {
-            editor[0].CodeMirror.setValue(data);
-        })
+    cy.importYAML(data)
   });
-  cy.clickButton('Import');
-  cy.clickButton('Close');
 });
 
 // Check CAPIProvider ready status
@@ -863,7 +832,7 @@ Cypress.Commands.add('checkCAPIProvider', (providerName) => {
   cy.waitForAllRowsInState('Ready');
 });
 
-Cypress.Commands.add('importYaml', (clusterName, yamlOrPath, namespace) => {
+Cypress.Commands.add('importYAML', (yamlOrPath, namespace, clusterName = 'local') => {
   cy.burgerMenuOperate('open');
   cy.accesMenuSelection([clusterName])
   cy.wait(250);
@@ -897,21 +866,14 @@ Cypress.Commands.add('importYaml', (clusterName, yamlOrPath, namespace) => {
   cy.clickButton('Import');
   cy.get('div.card-container').contains(/Applied \d+ Resource/).should('be.visible');
 
-  // Check if there is a column with age which contains a number
-  // Ideally we would need to wait for Active State for each resource but this column is not present on 2.9
-  cy.get('[data-testid^="sortable-cell-"] .live-date').each(($el) => {
-    cy.wrap($el).contains(/\d+/, { timeout: 60000 });
-  }).then(() => {
-    // All elements defined, click Close button
-    cy.clickButton('Close');
-  });
+  cy.clickButton('Close');
 });
 
 // Command to verify the count of resources with a given name in a cluster
 Cypress.Commands.add('verifyResourceCount', (clusterName, resourcePath, resourceName, namespace, expectedCount, timeout = 480000) => {
   cy.exploreCluster(clusterName);
   cy.accesMenuSelection(resourcePath);
-  if (namespace != '' ) {
+  if (namespace != '') {
     cy.setNamespace(namespace);
   }
   cy.typeInFilter(resourceName);
