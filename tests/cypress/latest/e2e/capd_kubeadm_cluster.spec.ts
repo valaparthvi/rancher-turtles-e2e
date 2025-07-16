@@ -199,6 +199,13 @@ describe('Import CAPD Kubeadm', { tags: '@short' }, () => {
           })
         })
       );
+
     }
   })
+
+  if (skipClusterDeletion) {
+    it('Remove the CAPD Kubeadm ClusterClass fleet repo', () => {
+      cy.removeFleetGitRepo(clusterClassRepoName)
+    })
+  }
 });

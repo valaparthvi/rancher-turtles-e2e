@@ -183,6 +183,13 @@ describe('Import CAPD RKE2', { tags: '@short' }, () => {
           })
         })
       );
+
     }
-  })
+  });
+
+  if (skipClusterDeletion) {
+    it('Remove CAPD RKE2 ClusterClass Fleet Repo', () => {
+      cy.removeFleetGitRepo(clusterClassRepoName)
+    })
+  }
 });
