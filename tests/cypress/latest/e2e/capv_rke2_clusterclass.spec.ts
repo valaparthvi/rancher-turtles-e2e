@@ -33,7 +33,7 @@ describe('Import CAPV RKE2 Class-Cluster', { tags: '@vsphere' }, () => {
 
   it('Create values.yaml Secret', () => {
     let encodedData = ''
-    cy.readFile('./fixtures/capv-helm-values.yaml').then((data) => {
+    cy.readFile('./fixtures/vsphere/capv-helm-values.yaml').then((data) => {
       // Deploy HA cluster with 3 control plane and 3 worker nodes, instead of default 1+1
       data = data.replace(/control_plane_machine_count: 1/g, "control_plane_machine_count: 3")
       data = data.replace(/worker_machine_count: 1/g, "worker_machine_count: 3")
@@ -62,7 +62,7 @@ describe('Import CAPV RKE2 Class-Cluster', { tags: '@vsphere' }, () => {
       encodedData = Buffer.from(data).toString('base64')
     })
 
-    cy.readFile('./fixtures/capv-helm-values-secret.yaml').then((data) => {
+    cy.readFile('./fixtures/vsphere/capv-helm-values-secret.yaml').then((data) => {
       data = data.replace(/replace_values/g, encodedData)
       cy.importYAML(data)
     });
@@ -81,7 +81,7 @@ describe('Import CAPV RKE2 Class-Cluster', { tags: '@vsphere' }, () => {
 
   it('Create Docker Auth Secret', () => {
     // Prevention for Docker.io rate limiting
-    cy.readFile('./fixtures/capv-docker-auth-token-secret.yaml').then((data) => {
+    cy.readFile('./fixtures/vsphere/capv-docker-auth-token-secret.yaml').then((data) => {
       const dockerAuthPasswordBase64 = Buffer.from(vsphere_secrets_json.cluster_docker_auth_password).toString('base64')
       const dockerAuthUsernameBase64 = Buffer.from(vsphere_secrets_json.cluster_docker_auth_username).toString('base64')
       data = data.replace(/replace_cluster_docker_auth_username/, dockerAuthUsernameBase64)
@@ -160,15 +160,15 @@ describe('Import CAPV RKE2 Class-Cluster', { tags: '@vsphere' }, () => {
 
     // Modify the helper job resource to use the initial leader name
     cy.get('@initialLeader').then((leader) => {
-      cy.readFile('fixtures/capv-kube-vip-static-pod-toggle-job.yaml').then((data) => {
+      cy.readFile('fixtures/vsphere/capv-kube-vip-static-pod-toggle-job.yaml').then((data) => {
         data = data.replace(/nodeName:.*/, `nodeName: ${leader}`);
-        cy.writeFile('fixtures/capv-kube-vip-static-pod-toggle-job.yaml', data);
+        cy.writeFile('fixtures/vsphere/capv-kube-vip-static-pod-toggle-job.yaml', data);
       });
     });
 
     // Trigger the job to disable kube-vip static pod on initial leader node
     // Leader role of kube-vip should be taken over by another node immediately
-    cy.importYAML('fixtures/capv-kube-vip-static-pod-toggle-job.yaml', 'kube-system', clusterName);
+    cy.importYAML('fixtures/vsphere/capv-kube-vip-static-pod-toggle-job.yaml', 'kube-system', clusterName);
 
     // Wait for the job to complete
     // TODO: poll https://kubevip_address:6443 until 401 is returned
@@ -191,7 +191,7 @@ describe('Import CAPV RKE2 Class-Cluster', { tags: '@vsphere' }, () => {
     });
 
     // Trigger the same job once again to restore the kube-vip static pod on initial leader node
-    cy.importYAML('fixtures/capv-kube-vip-static-pod-toggle-job.yaml', 'kube-system', clusterName);
+    cy.importYAML('fixtures/vsphere/capv-kube-vip-static-pod-toggle-job.yaml', 'kube-system', clusterName);
 
     // Count of kube-vip pods should be back on initial value (one for each control plane node)
     cy.verifyResourceCount(clusterName, ['Workloads', 'Pods'], 'kube-vip', 'kube-system', 3);
