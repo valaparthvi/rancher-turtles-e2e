@@ -14,17 +14,17 @@ limitations under the License.
 import '~/support/commands';
 import {qase} from 'cypress-qase-reporter/dist/mocha';
 import {getClusterName, skipClusterDeletion} from '~/support/utils';
-import {capdResourcesCleanup, capiClusterDeletion, importedRancherClusterDeletion} from "~/support/cleanup_support";
+import {capiClusterDeletion, importedRancherClusterDeletion} from "~/support/cleanup_support";
+import {Cluster} from "~/support/structs";
 
 Cypress.config();
-// TODO: Re-add to suite, rancher-turtles-e2e/issues/256
-describe('Create CAPD', { tags: '@skip' }, () => {
+describe('Create CAPD', {tags: '@short'}, () => {
   const timeout = 600000
   const className = 'docker-kubeadm-example'
   const clusterName = getClusterName(className)
   const k8sVersion = 'v1.31.4'
   const pathNames = ['kubeadm'] // TODO: Add rke2 path (capi-ui-extension/issues/121)
-  const namespace = 'capi-classes' // TODO: Change to capi-clusters (capi-ui-extension/issues/111)
+  const namespace = 'capi-clusters'
   const turtlesRepoUrl = 'https://github.com/rancher/turtles'
   const classesPath = 'examples/clusterclasses/docker/'
   const clusterClassRepoName = "docker-ui-clusterclass"
@@ -40,11 +40,8 @@ describe('Create CAPD', { tags: '@skip' }, () => {
       serviceCIDR = '10.128.0.0/12'
     }
 
-    it('Create Kindnet configmap', () => {
-      cy.importYAML('fixtures/kindnet.yaml', namespace);
-    })
-
     it('Add CAPD ClusterClass fleet repo', () => {
+      // TODO: Change the targetNamespace to capi-classes to test cross-namespace cluster provisioning (capi-ui-extension/issues/111)
       cy.addFleetGitRepo(clusterClassRepoName, turtlesRepoUrl, 'main', classesPath + path, namespace)
       // Go to CAPI > ClusterClass to ensure the clusterclass is created
       cy.checkCAPIClusterClass(className);
@@ -52,12 +49,40 @@ describe('Create CAPD', { tags: '@skip' }, () => {
 
     qase(44,
       it('Create child CAPD cluster from Clusterclass', () => {
-        const machines: Record<string, string> = { 'md-0': 'default-worker' }
-        cy.createCAPICluster(className, clusterName, machines, k8sVersion, '192.168.0.0/16', serviceCIDR);
+
+        const cluster: Cluster = {
+          className: className,
+          metadata: {
+            namespace: namespace, clusterName: clusterName, k8sVersion: k8sVersion, autoImportCluster: true,
+          },
+          clusterNetwork: {
+            serviceCIDR: [serviceCIDR], podCIDR: ['192.168.0.0/16'], serviceDomain: 'cluster.local'
+          },
+          controlPlane: {
+            replicas: '3'
+          },
+          workers: [
+            {class: 'default-worker', name: 'md-0', replicas: '3'},
+          ],
+          variables: [
+            {
+              name: "podSecurityStandard",
+              value: `audit: restricted
+enabled: false
+enforce: baseline
+warn: restricted`,
+              type: "codeMirror"
+            }
+          ],
+          labels: {
+            "cni": "calico",
+            "owner": "valaparthvi"
+          }
+        }
+        cy.createCAPICluster(cluster)
 
         // Ensuring cluster is provisioned also ensures all the Cluster Management > Advanced > Machines for the given cluster are Active.
         cy.checkCAPIClusterActive(clusterName, timeout);
-        cy.clusterAutoImport(clusterName, 'Enable');
         // Check child cluster is auto-imported
         cy.searchCluster(clusterName);
         cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
@@ -84,11 +109,9 @@ describe('Create CAPD', { tags: '@skip' }, () => {
         capiClusterDeletion(clusterName, timeout, undefined, true);
       })
 
-      it('Remove the ClusterClass fleet repo and other resources', () => {
+      it('Remove the ClusterClass fleet repo', () => {
         // Remove the clusterclass repo
         cy.removeFleetGitRepo(clusterClassRepoName);
-        // Cleanup other resources
-        capdResourcesCleanup();
       })
     }
   })

@@ -16,7 +16,7 @@ import './commands';
 import yaml from 'js-yaml';
 import './capz_support';
 import './cleanup_support';
-import {ClusterClassVariablesInput, Question} from './structs';
+import {Cluster, Question} from './structs';
 // @ts-expect-error ignore the error
 import registerCypressGrep from '@cypress/grep'
 
@@ -44,7 +44,8 @@ declare global {
       searchCluster(clusterName: string): Chainable<Element>;
       createNamespace(namespace: string): Chainable<Element>;
       setNamespace(namespace: string, namespaceID?: string): Chainable<Element>;
-      createCAPICluster(className: string, clusterName: string, machines: Record<string, string>, k8sVersion: string, podCIDR: string, serviceCIDR?: string, extraVariables?: ClusterClassVariablesInput[]): Chainable<Element>;
+
+      createCAPICluster(cluster: Cluster): Chainable<Element>;
       checkCAPICluster(clustername: string): Chainable<Element>;
       checkCAPIClusterClass(classname: string): Chainable<Element>;
       checkCAPIClusterActive(clustername: string, timeout?: number): Chainable<Element>;

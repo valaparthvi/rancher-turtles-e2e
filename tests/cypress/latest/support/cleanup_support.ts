@@ -34,7 +34,6 @@ export function capiClusterDeletion(clusterName: string, timeout: number, cluste
 }
 
 const capiClustersNS = 'capi-clusters'
-const capiClassesNS = 'capi-classes'
 
 export function capzResourcesCleanup() {
   cy.deleteKubernetesResource('local', ['More Resources', 'Cluster Provisioning', 'AzureClusterIdentities'], 'cluster-identity', capiClustersNS)
@@ -54,9 +53,4 @@ export function capvResourcesCleanup(provider: 'kubeadm' | 'rke2') {
   if (provider === 'rke2') {
     cy.deleteKubernetesResource('local', ['Storage', 'Secrets'], "capv-docker-token", capiClustersNS)
   }
-}
-
-export function capdResourcesCleanup() {
-    cy.deleteKubernetesResource('local', ['More Resources', 'Core', 'ConfigMaps'], "cni-docker-kubeadm-example-crs-0", capiClassesNS);
-    cy.deleteKubernetesResource('local', ['More Resources', 'Cluster Provisioning', 'ClusterResourceSets'], "docker-kubeadm-example-crs-0", capiClassesNS);
 }
