@@ -573,19 +573,22 @@ Cypress.Commands.add('checkChart', (operation, chartName, namespace, version, qu
 
   cy.clickButton(operation);
 
-  // Close the shell when installing Turtles as rancher is getting restarted
-  if (chartName == 'Rancher Turtles') {
-    cy.get('.closer').click();
-  } else {
-    // Wait for both CRD and main helm chart to be installed
-    cy.contains(new RegExp('SUCCESS: helm .*crd.*tgz.*SUCCESS: helm .*tgz'), { timeout: 240000 }).should('be.visible');
-    cy.get('.closer').click();
-  }
+  // If 'namespaces <namespace> not found' error or `Error` button is visible,
+  // wait for `Error` button to disappear and click on the `Install` button again
+  cy.get('.main-layout').then((mainLayout) => {
+    if (mainLayout.find('div.banner.error.footer-error').length) {
+      // Wait for the `Error` button to disappear; it changes to `Install` after a few seconds
+      cy.get('button.btn.bg-error', {timeout: 10000}).should('not.exist');
+      cy.clickButton(operation);
+    }
+  })
 
-  // Rancher pod restarts during Turtles installation
-  // Poll /dashboard/about until it returns HTTP 200 and then reload the page
+  // This is 1s more than the time required for the installation tabpanel to appear;
+  // or in case of Turtles, Rancher pod restarts, so this is enough time to start restarting Rancher
+  cy.wait(10000);
+
   if (chartName == 'Rancher Turtles') {
-    cy.wait(7000); // Should be enough time to start restarting Rancher
+    // Poll /dashboard/about until it returns HTTP 200 and then reload the page
     const checkApiStatus = (retries = 20) => {
       cy.request({
         url: '/about',
@@ -604,6 +607,22 @@ Cypress.Commands.add('checkChart', (operation, chartName, namespace, version, qu
       });
     };
     checkApiStatus();
+  } else {
+    cy.getBySel("windowmanager").then((windowmanager) => {
+      // Check if the installation panel has appeared;
+      if (windowmanager.find('div[role=tabpanel]').length) {
+        // Wait for both CRD and main helm chart to be installed
+        cy.contains(new RegExp('SUCCESS: helm .*crd.*tgz.*SUCCESS: helm .*tgz'), {timeout: 140000}).should('be.visible');
+        cy.get('.closer').click();
+      } else {
+        // If the installation panel failed to appear for some reason, manually check for app installation
+        // Installed Apps should have loaded by now, set the namespace and check if the app name is available in the list;
+        cy.contains('Installed Apps').should('be.visible');
+        cy.setNamespace(namespace)
+        cy.typeInFilter(chartName, 'input[aria-label="Filter table results"]');
+        cy.getBySel('sortable-cell-0-1').should('exist');
+      }
+    })
   }
 
   if (operation == 'Install') {
@@ -700,8 +719,8 @@ Cypress.Commands.add('deleteCluster', (clusterName, timeout = 120000) => {
 });
 
 // Command to type in Filter input
-Cypress.Commands.add('typeInFilter', (text) => {
-  cy.get('.input-sm')
+Cypress.Commands.add('typeInFilter', (text, selector = '.input-sm') => {
+  cy.get(selector)
     .click()
     .clear()
     .type(text)
