@@ -34,14 +34,8 @@ describe('Import CAPZ Kubeadm Class-Cluster', { tags: '@full' }, () => {
     // Go to CAPI > ClusterClass to ensure the clusterclass is created
     cy.checkCAPIClusterClass(classNamePrefix);
 
-    // Navigate to `local` cluster, More Resources > Fleet > Helm Apps and ensure the charts are active.
-    cy.burgerMenuOperate('open');
-    cy.contains('local').click();
-    cy.accesMenuSelection(['More Resources', 'Fleet', 'HelmApps']);
-    ["azure-ccm", "calico-cni"].forEach((app) => {
-      cy.typeInFilter(app);
-      cy.getBySel('sortable-cell-0-1').should('exist');
-    })
+    // Navigate to `local` cluster, More Resources > Fleet > HelmApps and ensure the charts are present.
+    cy.checkFleetHelmApps(['azure-ccm', 'calico-cni']);
   });
 
   it('Import CAPZ Kubeadm class-cluster using YAML', () => {
