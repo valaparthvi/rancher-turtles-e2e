@@ -7,8 +7,8 @@ on:
       - assigned
   pull_request:
     types: [opened, reopened]
-  branches-ignore:
-    - 'dependabot/**'
+    branches-ignore:
+      - 'dependabot/**'
 
 jobs:
   add_label:
