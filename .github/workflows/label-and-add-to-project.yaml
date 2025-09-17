@@ -7,12 +7,14 @@ on:
       - assigned
   pull_request:
     types: [opened, reopened]
+    branches-ignore:
+      - 'dependabot/**'
 
 jobs:
   add_label:
     env:
       SQUAD_QA_LABEL: "squad/qa"
-      PROJECT_NAME: "CAPI / Turtles"
+      PROJECT_NAME: "@valaparthvi's untitled project"
     name: Add Label and add to project board
     runs-on: ubuntu-latest
     permissions:
