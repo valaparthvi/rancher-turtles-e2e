@@ -13,7 +13,14 @@ limitations under the License.
 
 import '~/support/commands';
 import {qase} from 'cypress-qase-reporter/mocha';
-import {isPrimeChannel, isRancherManagerVersion, isTurtlesPrimeBuild, turtlesNamespace, capiNamespace} from '~/support/utils';
+import {
+  capiNamespace,
+  isPrimeChannel,
+  isRancherManagerVersion,
+  isTurtlesPrimeBuild,
+  providersChartNeedsStgRegistry,
+  turtlesNamespace
+} from '~/support/utils';
 import {vars} from '~/support/variables';
 
 const buildType = Cypress.env('turtles_dev_chart') && isRancherManagerVersion('2.13') ? 'dev-v2.13' : Cypress.env('turtles_dev_chart') && isRancherManagerVersion('2.14') ? 'dev-v2.14' : 'prod';
@@ -178,7 +185,8 @@ describe('Enable CAPI Providers', () => {
           }
         }
         // Install Rancher Turtles Certified Providers chart
-        cy.checkChart('local', 'Install', 'Rancher Turtles Certified Providers', turtlesNamespace, undefined, undefined, false, providerSelectionFunction);
+        let turtlesProvidersChartVersion = providersChartNeedsStgRegistry() && isRancherManagerVersion('2.13') ? '0.25' : undefined // TODO: Remove this once https://github.com/rancher/rancher/issues/53882 and 53883 is fixed; staging registry is currently broken for everything
+        cy.checkChart('local', 'Install', vars.turtlesProvidersChartName, turtlesNamespace, turtlesProvidersChartVersion, undefined, false, providerSelectionFunction);
       })
 
       it('Wait for all the providers to be Ready', {retries: 2}, () => {
