@@ -13,17 +13,16 @@ limitations under the License.
 
 import '~/support/commands';
 import * as cypressLib from '@rancher-ecp-qa/cypress-library';
-import {skipClusterDeletion} from '~/support/utils';
+import {isAPIv1beta1, skipClusterDeletion} from '~/support/utils';
 import {capdResourcesCleanup, capiClusterDeletion, importedRancherClusterDeletion} from "~/support/cleanup_support";
 import {vars} from '~/support/variables';
 
 Cypress.config();
-describe('Import CAPD RKE2 Class-Cluster', {tags: '@short'}, () => {
+describe('Import CAPD RKE2 Class-Cluster using Fleet', {tags: '@short'}, () => {
   let clusterName: string
   const timeout = vars.shortTimeout
   const classNamePrefix = 'docker-rke2'
-  const path = '/tests/assets/rancher-turtles-fleet-example/capd/rke2/class-clusters'
-  const branch = 'main'
+  const path = isAPIv1beta1 ? '/tests/assets/rancher-turtles-fleet-example/capd/rke2/class-clusters-v1beta1' : '/tests/assets/rancher-turtles-fleet-example/capd/rke2/class-clusters'
   const classesPath = 'examples/clusterclasses/docker/rke2'
   const clustersRepoName = 'docker-rke2-class-clusters'
   const clusterClassRepoName = "docker-rke2-clusterclass"
@@ -58,7 +57,7 @@ describe('Import CAPD RKE2 Class-Cluster', {tags: '@short'}, () => {
   context('[CLUSTER-IMPORT]', () => {
     it('Add CAPD cluster fleet repo and get cluster name', () => {
       cypressLib.checkNavIcon('cluster-management').should('exist');
-      cy.addFleetGitRepo(clustersRepoName, vars.repoUrl, branch, path);
+      cy.addFleetGitRepo(clustersRepoName, vars.repoUrl, vars.branch, path);
 
       // Check CAPI cluster using its name prefix i.e. className
       cy.checkCAPICluster(classNamePrefix);

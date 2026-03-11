@@ -1,6 +1,6 @@
 import '~/support/commands';
 import {qase} from 'cypress-qase-reporter/mocha';
-import {isRancherManagerVersion, skipClusterDeletion} from '~/support/utils';
+import {isAPIv1beta1, isRancherManagerVersion, skipClusterDeletion} from '~/support/utils';
 import * as randomstring from "randomstring";
 import {vars} from '~/support/variables';
 
