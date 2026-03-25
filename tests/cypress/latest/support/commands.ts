@@ -1031,7 +1031,11 @@ Cypress.Commands.add('deleteKubernetesResource', (clusterName = 'local', resourc
     cy.setNamespace(namespace);
   }
 
-  cy.clickNavMenu(resourcePath);
+  // using `cy.clickNavMenu()` does not always work here, so we explicitly wait after clicking a label.
+  resourcePath.forEach(label => {
+    cy.get('nav').contains(label).click()
+    cy.wait(1000);
+  });
 
   cy.typeInFilter(resourceName);
   cy.getBySel('sortable-cell-0-1').should('exist');
