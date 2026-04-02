@@ -34,14 +34,23 @@ export const isPrimeChannel = (): boolean => {
 
 // Check if Rancher comes from pre-release Prime channel
 export const isPrePrimeChannel = (): boolean => {
-  return rancherVersion.includes('prime-alpha') || rancherVersion.includes('prime-rc') || (isPreRelease && rancherVersion.includes('2.13'));
+  return rancherVersion.includes('prime-alpha') || rancherVersion.includes('prime-rc')
 }
 
-const isPreRelease = /(-alpha|-rc|head)/.test(rancherVersion);
+export const isPreRelease = /(-alpha|-rc)/.test(rancherVersion);
+export const isHeadBuild = rancherVersion.includes('head');
+
 
 // Check if Rancher should use staging registry to install Rancher Turtles Providers Chart
 export const providersChartNeedsStgRegistry = (): boolean => {
-  return (!isTurtlesDevChart) && (isPreRelease)
+  return (!isTurtlesDevChart) && (isPreRelease || isHeadBuild);
+}
+
+// Check if Rancher Turtles Providers chart should use staging registry chart name
+// Returns true for Rancher 2.13 alpha/rc builds
+// TODO: Remove this once https://github.com/rancher/rancher/issues/53882 and 53883 is fixed; staging registry is currently broken for everything
+export const needsProvidersStgChartName = (): boolean => {
+  return isRancherManagerVersion('2.13') && isPreRelease && !isTurtlesDevChart
 }
 
 export const isTurtlesPrimeBuild = (): boolean =>{
