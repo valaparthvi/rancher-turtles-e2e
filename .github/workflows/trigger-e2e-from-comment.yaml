@@ -49,6 +49,7 @@ jobs:
         id: parse
         env:
           COMMENT_BODY: ${{ github.event.comment.body }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           RESULT=$(echo "$COMMENT_BODY" | python3 .github/scripts/parse-e2e-comment.py) || {
             echo "::error::Failed to parse comment"
@@ -59,23 +60,23 @@ jobs:
             gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
               -f content=confused --silent
 
-            BODY=$(cat <<EOF
-          Failed to parse test configurations:
+            EXAMPLE='**Expected format:**
 
-          ${ERRORS}
-
-          **Expected format:**
-          \`\`\`
+          <pre>
           /run-e2e
-          \\\`\\\`\\\`yaml
+          ```yaml
           - rancher_version: head/2.14
             grep_test_by_tag: "@install"
             turtles_dev_chart: true
             destroy_runner: false
-          \\\`\\\`\\\`
-          \`\`\`
-          EOF
-          )
+          ```
+          </pre>'
+
+            BODY="Failed to parse test configurations:
+
+          ${ERRORS}
+
+          ${EXAMPLE}"
             gh api "repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
               -f body="$BODY"
 
@@ -83,9 +84,8 @@ jobs:
           }
 
           echo "configs=$(echo "$RESULT" | jq -c '.configs')" >> "$GITHUB_OUTPUT"
+          echo "user_overrides=$(echo "$RESULT" | jq -c '.user_overrides')" >> "$GITHUB_OUTPUT"
           echo "count=$(echo "$RESULT" | jq '.configs | length')" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Resolve PR branch
         id: pr
@@ -102,6 +102,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           CONFIGS: ${{ steps.parse.outputs.configs }}
+          USER_OVERRIDES: ${{ steps.parse.outputs.user_overrides }}
           HEAD_REF: ${{ steps.pr.outputs.head_ref }}
           REPO: ${{ github.repository }}
         run: |
@@ -110,17 +111,11 @@ jobs:
 
           for i in $(seq 0 $((COUNT - 1))); do
             CONFIG=$(echo "$CONFIGS" | jq -c ".[$i]")
-
-            RANCHER_VERSION=$(echo "$CONFIG" | jq -r '.rancher_version')
-            GREP_TAGS=$(echo "$CONFIG" | jq -r '.grep_test_by_tag')
-            DEV_CHART=$(echo "$CONFIG" | jq -r '.turtles_dev_chart')
-            DESTROY=$(echo "$CONFIG" | jq -r '.destroy_runner')
+            OVERRIDE=$(echo "$USER_OVERRIDES" | jq -c ".[$i]")
 
             echo "--- Dispatching run $((i + 1))/$COUNT ---"
-            echo "  rancher_version: $RANCHER_VERSION"
-            echo "  grep_test_by_tag: $GREP_TAGS"
-            echo "  turtles_dev_chart: $DEV_CHART"
-            echo "  destroy_runner: $DESTROY"
+            echo "  Config: $CONFIG"
+            echo "  User overrides: $OVERRIDE"
 
             # Record timestamp before dispatch (ISO 8601 UTC)
             BEFORE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -140,19 +135,17 @@ jobs:
               echo "::warning::Dispatch $((i + 1)) failed with HTTP $HTTP_CODE"
               RESULTS=$(echo "$RESULTS" | jq \
                 --arg idx "$((i + 1))" \
-                --arg rv "$RANCHER_VERSION" \
-                --arg tags "$GREP_TAGS" \
-                --arg dc "$DEV_CHART" \
-                --arg dr "$DESTROY" \
-                '. + [{"index": $idx, "rancher_version": $rv, "grep_test_by_tag": $tags, "turtles_dev_chart": $dc, "destroy_runner": $dr, "run_url": "FAILED", "run_id": "N/A"}]')
+                --argjson ovr "$OVERRIDE" \
+                '. + [{"index": $idx, "user_overrides": $ovr, "run_url": "FAILED", "run_id": "N/A"}]')
               continue
             fi
 
             echo "  Dispatch successful, polling for run ID..."
 
-            # Poll for the new run
+            # Poll for the new run (pick oldest uncaptured to match dispatch order)
             RUN_URL=""
             RUN_ID=""
+            CAPTURED_IDS=$(echo "$RESULTS" | jq -c '[.[].run_id | select(. != "N/A")]')
             for attempt in $(seq 1 20); do
               sleep 3
               RUNS=$(curl -s \
@@ -160,16 +153,17 @@ jobs:
                 -H "Accept: application/vnd.github.v3+json" \
                 "https://api.github.com/repos/${REPO}/actions/workflows/ui-e2e.yaml/runs?event=workflow_dispatch&branch=${HEAD_REF}&created=>=${BEFORE}&per_page=5")
 
-              RUN_ID=$(echo "$RUNS" | jq -r '[.workflow_runs[] | select(.id)] | sort_by(.created_at) | reverse | .[0].id // empty')
+              RUN_ID=$(echo "$RUNS" | jq -r --argjson captured "$CAPTURED_IDS" '
+                [.workflow_runs[]
+                 | select(.id)
+                 | select((.id | tostring) as $rid | ($captured | map(tostring) | index($rid)) | not)
+                ] | sort_by(.created_at) | .[0].id // empty
+              ')
 
               if [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]]; then
-                # Verify this run ID isn't one we already captured
-                ALREADY_CAPTURED=$(echo "$RESULTS" | jq --arg rid "$RUN_ID" '[.[] | select(.run_id == $rid)] | length')
-                if [[ "$ALREADY_CAPTURED" == "0" ]]; then
-                  RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
-                  echo "  Found run: $RUN_URL"
-                  break
-                fi
+                RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+                echo "  Found run: $RUN_URL (attempt $attempt)"
+                break
               fi
             done
 
@@ -181,13 +175,15 @@ jobs:
 
             RESULTS=$(echo "$RESULTS" | jq \
               --arg idx "$((i + 1))" \
-              --arg rv "$RANCHER_VERSION" \
-              --arg tags "$GREP_TAGS" \
-              --arg dc "$DEV_CHART" \
-              --arg dr "$DESTROY" \
+              --argjson ovr "$OVERRIDE" \
               --arg url "$RUN_URL" \
               --arg rid "$RUN_ID" \
-              '. + [{"index": $idx, "rancher_version": $rv, "grep_test_by_tag": $tags, "turtles_dev_chart": $dc, "destroy_runner": $dr, "run_url": $url, "run_id": $rid}]')
+              '. + [{"index": $idx, "user_overrides": $ovr, "run_url": $url, "run_id": $rid}]')
+
+            # Brief delay between dispatches to avoid timestamp collision
+            if [[ $i -lt $((COUNT - 1)) ]]; then
+              sleep 2
+            fi
           done
 
           echo "results=$(echo "$RESULTS" | jq -c '.')" >> "$GITHUB_OUTPUT"
@@ -207,12 +203,16 @@ jobs:
           for i in $(seq 0 $((COUNT - 1))); do
             ROW=$(echo "$RESULTS" | jq -r ".[$i]")
             IDX=$(echo "$ROW" | jq -r '.index')
-            RV=$(echo "$ROW" | jq -r '.rancher_version')
-            TAGS=$(echo "$ROW" | jq -r '.grep_test_by_tag')
-            DC=$(echo "$ROW" | jq -r '.turtles_dev_chart')
-            DR=$(echo "$ROW" | jq -r '.destroy_runner')
             URL=$(echo "$ROW" | jq -r '.run_url')
             RID=$(echo "$ROW" | jq -r '.run_id')
+
+            # Build compact config summary from user overrides
+            CONFIG_SUMMARY=$(echo "$ROW" | jq -r '
+              .user_overrides | to_entries | map("\(.key)=\(.value)") | join(", ")
+            ')
+            if [[ -z "$CONFIG_SUMMARY" ]]; then
+              CONFIG_SUMMARY="(all defaults)"
+            fi
 
             if [[ "$URL" == "FAILED" ]]; then
               LINK="Dispatch failed"
@@ -222,15 +222,15 @@ jobs:
               LINK="[Run #${RID}](${URL})"
             fi
 
-            TABLE_ROWS="${TABLE_ROWS}| ${IDX} | ${RV} | ${TAGS} | ${DC} | ${DR} | ${LINK} |
+            TABLE_ROWS="${TABLE_ROWS}| ${IDX} | \`${CONFIG_SUMMARY}\` | ${LINK} |
           "
           done
 
           BODY=$(cat <<EOF
           **E2E Tests Triggered**
 
-          | # | Rancher Version | Test Tags | Dev Chart | Destroy Runner | Run |
-          |---|----------------|-----------|-----------|----------------|-----|
+          | # | Config | Run |
+          |---|--------|-----|
           ${TABLE_ROWS}
           Branch: \`${HEAD_REF}\` | Triggered by @${COMMENTER}
           EOF

@@ -35,6 +35,7 @@ def load_input_schema(workflow_path):
         schema[name] = {
             "type": input_type,
             "default": spec.get("default"),
+            "required": spec.get("required", False),
         }
         if input_type == "choice":
             schema[name]["options"] = spec.get("options", [])
@@ -55,7 +56,7 @@ def validate_entry(entry, index, schema):
     errors = []
 
     if not isinstance(entry, dict):
-        return None, [f"Entry {index + 1}: expected a mapping, got {type(entry).__name__}"]
+        return None, [], [f"Entry {index + 1}: expected a mapping, got {type(entry).__name__}"]
 
     unknown_keys = set(entry.keys()) - set(schema.keys())
     if unknown_keys:
@@ -63,6 +64,7 @@ def validate_entry(entry, index, schema):
 
     # Start with defaults from the workflow file
     validated = {}
+    user_keys = set()
     for name, spec in schema.items():
         if spec["default"] is not None:
             validated[name] = spec["default"]
@@ -77,8 +79,10 @@ def validate_entry(entry, index, schema):
         if spec["type"] == "boolean":
             if isinstance(value, bool):
                 validated[key] = value
+                user_keys.add(key)
             elif isinstance(value, str) and value.lower() in ("true", "false"):
                 validated[key] = value.lower() == "true"
+                user_keys.add(key)
             else:
                 errors.append(
                     f"Entry {index + 1}: '{key}' must be true or false, got '{value}'"
@@ -92,52 +96,63 @@ def validate_entry(entry, index, schema):
                 )
             else:
                 validated[key] = str_value
+                user_keys.add(key)
         else:
             validated[key] = str(value)
+            user_keys.add(key)
 
-    return validated, errors
+    # Check required fields are present
+    for name, spec in schema.items():
+        if spec["required"] and name not in validated:
+            errors.append(
+                f"Entry {index + 1}: required field '{name}' is missing and has no default"
+            )
+
+    return validated, sorted(user_keys), errors
 
 
 def parse_comment(comment_body, schema):
-    """Parse the comment body and return (configs, errors)."""
+    """Parse the comment body and return (configs, user_keys_list, errors)."""
     yaml_content = extract_yaml_block(comment_body)
     if yaml_content is None:
-        return None, ["No YAML code block found in comment."]
+        return None, [], ["No YAML code block found in comment."]
 
     try:
         data = yaml.safe_load(yaml_content)
     except yaml.YAMLError as e:
-        return None, [f"Invalid YAML: {e}"]
+        return None, [], [f"Invalid YAML: {e}"]
 
     if not isinstance(data, list):
-        return None, ["YAML content must be a list of test configurations."]
+        return None, [], ["YAML content must be a list of test configurations."]
 
     if len(data) > MAX_ENTRIES:
-        return None, [f"Too many entries ({len(data)}). Maximum is {MAX_ENTRIES}."]
+        return None, [], [f"Too many entries ({len(data)}). Maximum is {MAX_ENTRIES}."]
 
     if len(data) == 0:
-        return None, ["YAML list is empty."]
+        return None, [], ["YAML list is empty."]
 
     all_configs = []
+    all_user_keys = []
     all_errors = []
 
     for i, entry in enumerate(data):
-        config, errors = validate_entry(entry, i, schema)
+        config, user_keys, errors = validate_entry(entry, i, schema)
         all_errors.extend(errors)
         if config:
             all_configs.append(config)
+            all_user_keys.append(user_keys)
 
     if all_errors:
-        return None, all_errors
+        return None, [], all_errors
 
-    return all_configs, []
+    return all_configs, all_user_keys, []
 
 
 def main():
     schema = load_input_schema(WORKFLOW_PATH)
 
     comment_body = sys.stdin.read()
-    configs, errors = parse_comment(comment_body, schema)
+    configs, all_user_keys, errors = parse_comment(comment_body, schema)
 
     if errors:
         output = {"success": False, "errors": errors}
@@ -150,7 +165,12 @@ def main():
             if isinstance(value, bool):
                 config[key] = str(value).lower()
 
-    output = {"success": True, "configs": configs}
+    # Build user_overrides: only the keys explicitly provided by the user
+    user_overrides = []
+    for config, keys in zip(configs, all_user_keys):
+        user_overrides.append({k: config[k] for k in keys})
+
+    output = {"success": True, "configs": configs, "user_overrides": user_overrides}
     print(json.dumps(output))
 
 
