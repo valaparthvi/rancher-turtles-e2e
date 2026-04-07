@@ -1,0 +1,239 @@
+name: Trigger E2E from PR Comment
+run-name: "E2E dispatch from PR #${{ github.event.issue.number }}"
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  dispatch-e2e:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/run-e2e')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check authorization
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          REPO: ${{ github.repository }}
+        run: |
+          PERMISSION=$(gh api "repos/${REPO}/collaborators/${COMMENTER}/permission" --jq '.permission')
+          if [[ "$PERMISSION" != "admin" && "$PERMISSION" != "write" ]]; then
+            echo "::error::User ${COMMENTER} does not have write access (permission: ${PERMISSION})"
+
+            gh api "repos/${REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
+              -f content=confused --silent
+
+            gh api "repos/${REPO}/issues/${{ github.event.issue.number }}/comments" \
+              -f body="@${COMMENTER} You don't have permission to trigger E2E tests. Write access is required."
+
+            exit 1
+          fi
+          echo "User ${COMMENTER} authorized with permission: ${PERMISSION}"
+
+      - name: Add rocket reaction
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=rocket --silent
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse comment
+        id: parse
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          RESULT=$(echo "$COMMENT_BODY" | python3 .github/scripts/parse-e2e-comment.py) || {
+            echo "::error::Failed to parse comment"
+            echo "$RESULT" | jq -r '.errors[]' 2>/dev/null
+
+            ERRORS=$(echo "$RESULT" | jq -r '.errors | map("- " + .) | join("\n")' 2>/dev/null || echo "- Unknown parsing error")
+
+            gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+              -f content=confused --silent
+
+            EXAMPLE='**Expected format:**
+
+          <pre>
+          /run-e2e
+          ```yaml
+          - rancher_version: head/2.14
+            grep_test_by_tag: "@install"
+            turtles_dev_chart: true
+            destroy_runner: false
+          ```
+          </pre>'
+
+            BODY="Failed to parse test configurations:
+
+          ${ERRORS}
+
+          ${EXAMPLE}"
+            gh api "repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
+              -f body="$BODY"
+
+            exit 1
+          }
+
+          echo "configs=$(echo "$RESULT" | jq -c '.configs')" >> "$GITHUB_OUTPUT"
+          echo "user_overrides=$(echo "$RESULT" | jq -c '.user_overrides')" >> "$GITHUB_OUTPUT"
+          echo "count=$(echo "$RESULT" | jq '.configs | length')" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve PR branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          PR_DATA=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}")
+          HEAD_REF=$(echo "$PR_DATA" | jq -r '.head.ref')
+          echo "head_ref=${HEAD_REF}" >> "$GITHUB_OUTPUT"
+          echo "PR branch: ${HEAD_REF}"
+
+      - name: Dispatch workflows and collect run URLs
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          CONFIGS: ${{ steps.parse.outputs.configs }}
+          USER_OVERRIDES: ${{ steps.parse.outputs.user_overrides }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          COUNT=$(echo "$CONFIGS" | jq 'length')
+          RESULTS="[]"
+
+          for i in $(seq 0 $((COUNT - 1))); do
+            CONFIG=$(echo "$CONFIGS" | jq -c ".[$i]")
+            OVERRIDE=$(echo "$USER_OVERRIDES" | jq -c ".[$i]")
+
+            echo "--- Dispatching run $((i + 1))/$COUNT ---"
+            echo "  Config: $CONFIG"
+            echo "  User overrides: $OVERRIDE"
+
+            # Record timestamp before dispatch (ISO 8601 UTC)
+            BEFORE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+            # Build inputs JSON
+            INPUTS=$(echo "$CONFIG" | jq -c '.')
+
+            # Dispatch the workflow
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${REPO}/actions/workflows/ui-e2e.yaml/dispatches" \
+              -d "{\"ref\":\"${HEAD_REF}\",\"inputs\":${INPUTS}}")
+
+            if [[ "$HTTP_CODE" != "204" ]]; then
+              echo "::warning::Dispatch $((i + 1)) failed with HTTP $HTTP_CODE"
+              RESULTS=$(echo "$RESULTS" | jq \
+                --arg idx "$((i + 1))" \
+                --argjson ovr "$OVERRIDE" \
+                '. + [{"index": $idx, "user_overrides": $ovr, "run_url": "FAILED", "run_id": "N/A"}]')
+              continue
+            fi
+
+            echo "  Dispatch successful, polling for run ID..."
+
+            # Poll for the new run (pick oldest uncaptured to match dispatch order)
+            RUN_URL=""
+            RUN_ID=""
+            CAPTURED_IDS=$(echo "$RESULTS" | jq -c '[.[].run_id | select(. != "N/A")]')
+            for attempt in $(seq 1 20); do
+              sleep 3
+              RUNS=$(curl -s \
+                -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/${REPO}/actions/workflows/ui-e2e.yaml/runs?event=workflow_dispatch&branch=${HEAD_REF}&created=>=${BEFORE}&per_page=5")
+
+              RUN_ID=$(echo "$RUNS" | jq -r --argjson captured "$CAPTURED_IDS" '
+                [.workflow_runs[]
+                 | select(.id)
+                 | select((.id | tostring) as $rid | ($captured | map(tostring) | index($rid)) | not)
+                ] | sort_by(.created_at) | .[0].id // empty
+              ')
+
+              if [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]]; then
+                RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+                echo "  Found run: $RUN_URL (attempt $attempt)"
+                break
+              fi
+            done
+
+            if [[ -z "$RUN_URL" ]]; then
+              echo "::warning::Could not determine run URL for dispatch $((i + 1))"
+              RUN_URL="Could not determine URL"
+              RUN_ID="N/A"
+            fi
+
+            RESULTS=$(echo "$RESULTS" | jq \
+              --arg idx "$((i + 1))" \
+              --argjson ovr "$OVERRIDE" \
+              --arg url "$RUN_URL" \
+              --arg rid "$RUN_ID" \
+              '. + [{"index": $idx, "user_overrides": $ovr, "run_url": $url, "run_id": $rid}]')
+
+            # Brief delay between dispatches to avoid timestamp collision
+            if [[ $i -lt $((COUNT - 1)) ]]; then
+              sleep 2
+            fi
+          done
+
+          echo "results=$(echo "$RESULTS" | jq -c '.')" >> "$GITHUB_OUTPUT"
+
+      - name: Post reply comment
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          RESULTS: ${{ steps.dispatch.outputs.results }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          TABLE_ROWS=""
+          COUNT=$(echo "$RESULTS" | jq 'length')
+
+          for i in $(seq 0 $((COUNT - 1))); do
+            ROW=$(echo "$RESULTS" | jq -r ".[$i]")
+            IDX=$(echo "$ROW" | jq -r '.index')
+            URL=$(echo "$ROW" | jq -r '.run_url')
+            RID=$(echo "$ROW" | jq -r '.run_id')
+
+            # Build compact config summary from user overrides
+            CONFIG_SUMMARY=$(echo "$ROW" | jq -r '
+              .user_overrides | to_entries | map("\(.key)=\(.value)") | join(", ")
+            ')
+            if [[ -z "$CONFIG_SUMMARY" ]]; then
+              CONFIG_SUMMARY="(all defaults)"
+            fi
+
+            if [[ "$URL" == "FAILED" ]]; then
+              LINK="Dispatch failed"
+            elif [[ "$URL" == "Could not determine URL" ]]; then
+              LINK="URL unavailable"
+            else
+              LINK="[Run #${RID}](${URL})"
+            fi
+
+            TABLE_ROWS="${TABLE_ROWS}| ${IDX} | \`${CONFIG_SUMMARY}\` | ${LINK} |
+          "
+          done
+
+          BODY=$(cat <<EOF
+          **E2E Tests Triggered**
+
+          | # | Config | Run |
+          |---|--------|-----|
+          ${TABLE_ROWS}
+          Branch: \`${HEAD_REF}\` | Triggered by @${COMMENTER}
+          EOF
+          )
+
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="$BODY"
