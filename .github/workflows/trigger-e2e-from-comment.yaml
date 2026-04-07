@@ -135,8 +135,9 @@ jobs:
               echo "::warning::Dispatch $((i + 1)) failed with HTTP $HTTP_CODE"
               RESULTS=$(echo "$RESULTS" | jq \
                 --arg idx "$((i + 1))" \
+                --argjson cfg "$CONFIG" \
                 --argjson ovr "$OVERRIDE" \
-                '. + [{"index": $idx, "user_overrides": $ovr, "run_url": "FAILED", "run_id": "N/A"}]')
+                '. + [{"index": $idx, "config": $cfg, "user_overrides": $ovr, "run_url": "FAILED", "run_id": "N/A", "run_number": "N/A"}]')
               continue
             fi
 
@@ -145,6 +146,7 @@ jobs:
             # Poll for the new run (pick oldest uncaptured to match dispatch order)
             RUN_URL=""
             RUN_ID=""
+            RUN_NUMBER=""
             CAPTURED_IDS=$(echo "$RESULTS" | jq -c '[.[].run_id | select(. != "N/A")]')
             for attempt in $(seq 1 20); do
               sleep 3
@@ -153,16 +155,18 @@ jobs:
                 -H "Accept: application/vnd.github.v3+json" \
                 "https://api.github.com/repos/${REPO}/actions/workflows/ui-e2e.yaml/runs?event=workflow_dispatch&branch=${HEAD_REF}&created=>=${BEFORE}&per_page=5")
 
-              RUN_ID=$(echo "$RUNS" | jq -r --argjson captured "$CAPTURED_IDS" '
+              MATCH=$(echo "$RUNS" | jq -c --argjson captured "$CAPTURED_IDS" '
                 [.workflow_runs[]
                  | select(.id)
                  | select((.id | tostring) as $rid | ($captured | map(tostring) | index($rid)) | not)
-                ] | sort_by(.created_at) | .[0].id // empty
+                ] | sort_by(.created_at) | .[0] // empty
               ')
 
-              if [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]]; then
+              if [[ -n "$MATCH" && "$MATCH" != "null" ]]; then
+                RUN_ID=$(echo "$MATCH" | jq -r '.id')
+                RUN_NUMBER=$(echo "$MATCH" | jq -r '.run_number')
                 RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
-                echo "  Found run: $RUN_URL (attempt $attempt)"
+                echo "  Found run: $RUN_URL (#$RUN_NUMBER, attempt $attempt)"
                 break
               fi
             done
@@ -171,14 +175,17 @@ jobs:
               echo "::warning::Could not determine run URL for dispatch $((i + 1))"
               RUN_URL="Could not determine URL"
               RUN_ID="N/A"
+              RUN_NUMBER="N/A"
             fi
 
             RESULTS=$(echo "$RESULTS" | jq \
               --arg idx "$((i + 1))" \
+              --argjson cfg "$CONFIG" \
               --argjson ovr "$OVERRIDE" \
               --arg url "$RUN_URL" \
               --arg rid "$RUN_ID" \
-              '. + [{"index": $idx, "user_overrides": $ovr, "run_url": $url, "run_id": $rid}]')
+              --arg rn "$RUN_NUMBER" \
+              '. + [{"index": $idx, "config": $cfg, "user_overrides": $ovr, "run_url": $url, "run_id": $rid, "run_number": $rn}]')
 
             # Brief delay between dispatches to avoid timestamp collision
             if [[ $i -lt $((COUNT - 1)) ]]; then
@@ -203,8 +210,13 @@ jobs:
           for i in $(seq 0 $((COUNT - 1))); do
             ROW=$(echo "$RESULTS" | jq -r ".[$i]")
             IDX=$(echo "$ROW" | jq -r '.index')
+            RV=$(echo "$ROW" | jq -r '.config.rancher_version')
+            TAGS=$(echo "$ROW" | jq -r '.config.grep_test_by_tag')
+            DC=$(echo "$ROW" | jq -r '.config.turtles_dev_chart')
+            DR=$(echo "$ROW" | jq -r '.config.destroy_runner')
             URL=$(echo "$ROW" | jq -r '.run_url')
             RID=$(echo "$ROW" | jq -r '.run_id')
+            RN=$(echo "$ROW" | jq -r '.run_number')
 
             # Build compact config summary from user overrides
             CONFIG_SUMMARY=$(echo "$ROW" | jq -r '
@@ -218,19 +230,21 @@ jobs:
               LINK="Dispatch failed"
             elif [[ "$URL" == "Could not determine URL" ]]; then
               LINK="URL unavailable"
+            elif [[ "$RN" != "N/A" && "$RN" != "null" ]]; then
+              LINK="[#${RN}](${URL})"
             else
-              LINK="[Run #${RID}](${URL})"
+              LINK="[Run](${URL})"
             fi
 
-            TABLE_ROWS="${TABLE_ROWS}| ${IDX} | \`${CONFIG_SUMMARY}\` | ${LINK} |
+            TABLE_ROWS="${TABLE_ROWS}| ${IDX} | ${RV} | ${TAGS} | ${DC} | ${DR} | \`${CONFIG_SUMMARY}\` | ${LINK} |
           "
           done
 
           BODY=$(cat <<EOF
           **E2E Tests Triggered**
 
-          | # | Config | Run |
-          |---|--------|-----|
+          | # | Rancher Version | Test Tags | Dev Chart | Destroy Runner | Config | Run |
+          |---|-----------------|-----------|-----------|----------------|--------|-----|
           ${TABLE_ROWS}
           Branch: \`${HEAD_REF}\` | Triggered by @${COMMENTER}
           EOF
