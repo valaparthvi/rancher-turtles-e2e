@@ -20,19 +20,23 @@ on:
     inputs:
       rancher_version:
         description: Rancher Manager channel/<version|head_version>[/head_version] to use for installation
-        default: head/2.12
+        default: head/2.14
         type: string
       turtles_chart_version:
-        description: Rancher Turtles chart version to test (eg. 0.21.0)
-        type: string
-      capi_ui_version:
-        description: Version of the capi-ui-extension to test (eg. 0.8.2)
+        description: Rancher Turtles chart version to test (eg. 0.24.3 | 108.0.0+up0.25.0)
         type: string
       grep_test_by_tag:
-        description: Test tags. For multiple selection separate with spaces (Available options - @install [@upgrade @short @full | @vsphere]). Keep always @install
+        description: Test tags. For multiple selection separate with spaces (Available options - @install [@migration @upgrade @short @full | @vsphere]). Keep always @install
         required: true
         type: string
         default: '@install @short'
+      target_build_type:
+        description: Build type for turtles_dev_chart (prime|community)
+        default: 'prime'
+        type: string
+      cluster_name_suffix:
+        description: Suffix to be used in cluster name (default - github.run_number)
+        type: string
       turtles_dev_chart:
         description: Install rancher turtles dev chart
         default: true
@@ -49,16 +53,13 @@ on:
         description: Report to QASE
         default: false
         type: boolean
-      cluster_name_suffix:
-        description: Suffix to be used in cluster name (default - github.run_number)
-        type: string
       runner_template:
         description: Runner template to use
-        default: capi-e2e-ci-runner-spot-n2-highmem-16-template-v3
+        default: capi-e2e-ci-runner-spot-n2-highmem-16-template-v4
         type: choice
         options:
-          - capi-e2e-ci-runner-spot-n2-highmem-16-template-v3
-          - capi-e2e-ci-runner-standard-n2-highmem-4-template-v4
+          - capi-e2e-ci-runner-spot-n2-highmem-16-template-v4
+          - capi-e2e-ci-runner-standard-n2-highmem-4-template-v5
   schedule:
     - cron: '0 3 * * *' # @short
     - cron: '0 4 * * *' # @vsphere
@@ -90,16 +91,17 @@ jobs:
       docker_auth_username: ${{ secrets.DOCKER_AUTH_USERNAME }}
       docker_auth_password: ${{ secrets.DOCKER_AUTH_PASSWORD }}
       docker_registry_config: ${{ secrets.DOCKER_REGISTRY_CONFIG }}
+      providers_oci_repo: ${{ secrets.PROVIDERS_OCI_REPO }}
+      providers_stg_oci_repo: ${{ secrets.PROVIDERS_STG_OCI_REPO }}
     with:
       test_description: "UI - e2e tests with Standard K3s"
-      cluster_name: rancher-k3s-cluster
       destroy_runner: ${{ github.event_name == 'schedule' && true || inputs.destroy_runner }}
-      capi_ui_version: ${{ inputs.capi_ui_version }}
-      rancher_version: ${{ inputs.rancher_version || 'head/2.12' }}
+      rancher_version: ${{ inputs.rancher_version || 'head/2.14' }}
       qase_report: ${{ inputs.qase_report == true || (github.event_name == 'schedule' && true) }}
       turtles_dev_chart: ${{ inputs.turtles_dev_chart == true || (github.event_name == 'schedule' && true) }}
+      target_build_type: ${{ inputs.target_build_type || 'prime' }}
       turtles_chart_version: ${{ inputs.turtles_chart_version }}
       skip_cluster_delete: ${{ inputs.skip_cluster_delete || (github.event_name == 'schedule' && false) }}
-      runner_template: ${{ inputs.runner_template || 'capi-e2e-ci-runner-spot-n2-highmem-16-template-v3' }}
+      runner_template: ${{ inputs.runner_template || 'capi-e2e-ci-runner-spot-n2-highmem-16-template-v4' }}
       cluster_name_suffix: ${{ inputs.cluster_name_suffix || github.run_number }}
       grep_test_by_tag: ${{ inputs.grep_test_by_tag || (github.event.schedule == '0 3 * * *' && '@install @short') || (github.event.schedule == '0 4 * * *' && '@install @vsphere') || (github.event.schedule == '0 5 * * 6' && '@install @full') || (github.event.schedule == '0 3 * * 6' && '@install @upgrade @short') || (github.event_name == 'pull_request' && '@install') }}

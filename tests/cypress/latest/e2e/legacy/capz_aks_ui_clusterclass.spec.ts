@@ -1,14 +1,13 @@
 import '~/support/commands';
-import {qase} from 'cypress-qase-reporter/mocha';
 import {getClusterName, skipClusterDeletion} from '~/support/utils';
 import {Cluster} from '~/support/structs';
 
 Cypress.config();
-describe('Create CAPZ AKS Class-Cluster', { tags: '@full' }, () => {
+describe('Create CAPZ AKS Class-Cluster', {tags: '@full'}, () => {
   const timeout = 1200000
   const classNamePrefix = 'azure-aks'
   const clusterName = getClusterName(classNamePrefix)
-  const k8sVersion = 'v1.31.4'
+  const k8sVersion = 'v1.32.0'
   const podCIDR = '192.168.0.0/16'
   const location = "westeurope" // this is one of the regions supported by ClusterClass definition
   const namespace = "capz-system"
@@ -17,10 +16,10 @@ describe('Create CAPZ AKS Class-Cluster', { tags: '@full' }, () => {
   const clusterClassRepoName = "azure-aks-clusterclass"
   const providerName = 'azure'
 
-  const clientID = Cypress.env("azure_client_id")
-  const clientSecret = btoa(Cypress.env("azure_client_secret"))
-  const subscriptionID = Cypress.env("azure_subscription_id")
-  const tenantID = Cypress.env("azure_tenant_id")
+  const clientID = Cypress.expose("azure_client_id")
+  const clientSecret = btoa(Cypress.expose("azure_client_secret"))
+  const subscriptionID = Cypress.expose("azure_subscription_id")
+  const tenantID = Cypress.expose("azure_tenant_id")
 
   beforeEach(() => {
     cy.login();
@@ -31,7 +30,6 @@ describe('Create CAPZ AKS Class-Cluster', { tags: '@full' }, () => {
   it('Create Azure CAPIProvider', () => {
     cy.removeCAPIResource('Providers', providerName);
     cy.createCAPIProvider(providerName);
-    cy.checkCAPIProvider(providerName);
   })
 
   it('Setup the namespace for importing', () => {
@@ -75,10 +73,10 @@ describe('Create CAPZ AKS Class-Cluster', { tags: '@full' }, () => {
       }
       cy.createCAPICluster(cluster);
     cy.checkCAPIMenu();
-    cy.contains(new RegExp('Provisioned.*' + clusterName), { timeout: timeout });
+    cy.contains(new RegExp('Provisioned.*' + clusterName), {timeout: timeout});
       // Check child cluster is auto-imported
     cy.searchCluster(clusterName);
-    cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
+    cy.contains(new RegExp('Active.*' + clusterName), {timeout: timeout});
   })
   );
 
@@ -87,11 +85,11 @@ describe('Create CAPZ AKS Class-Cluster', { tags: '@full' }, () => {
     cy.contains(clusterName).click();
 
     // Install Chart
-    cy.checkChart('Install', 'Logging', 'cattle-logging-system');
+    cy.checkChart(clusterName, 'Install', 'Logging', 'cattle-logging-system');
   })
 
   if (skipClusterDeletion) {
-    qase(89, it('Remove created CAPZ cluster from Rancher Manager and Delete the CAPZ cluster', { retries: 1 }, () => {
+    qase(89, it('Remove created CAPZ cluster from Rancher Manager and Delete the CAPZ cluster', {retries: 1}, () => {
       // Check cluster is not deleted after removal
       cy.deleteCluster(clusterName);
       cy.goToHome();

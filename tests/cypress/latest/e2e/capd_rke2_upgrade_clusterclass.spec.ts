@@ -1,66 +1,49 @@
-/*
-Copyright © 2022 - 2025 SUSE LLC
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-    http://www.apache.org/licenses/LICENSE-2.0
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
 
 import '~/support/commands';
-import {qase} from 'cypress-qase-reporter/mocha';
-import {getClusterName, isRancherManagerVersion} from '~/support/utils';
+import {getClusterName, isRancherManagerVersion, isAPIv1beta1} from '~/support/utils';
 import {capdResourcesCleanup, capiClusterDeletion, importedRancherClusterDeletion} from "~/support/cleanup_support";
+import {vars} from '~/support/variables';
 
 Cypress.config();
-describe('Import CAPD RKE2 Class-Cluster for Upgrade', { tags: '@upgrade' }, () => {
-  const timeout = 600000
+describe('Import CAPD RKE2 Class-Cluster for Upgrade', {tags: '@upgrade'}, () => {
+  const timeout = vars.shortTimeout
   const classNamePrefix = 'docker-rke2'
   const clusterName = getClusterName(classNamePrefix)
-  const turtlesRepoUrl = 'https://github.com/rancher/turtles'
   const classesPath = 'examples/clusterclasses/docker/rke2'
-  const clusterClassRepoName = "docker-rke2-clusterclass"
-  const dockerAuthUsernameBase64 = btoa(Cypress.env("docker_auth_username"))
-  const dockerAuthPasswordBase64 = btoa(Cypress.env("docker_auth_password"))
-  const capiClustersNS = 'capi-clusters'
+  const clusterClassRepoName = 'docker-rke2-clusterclass'
+  const classClusterFileName = isAPIv1beta1 ? "./fixtures/docker/capd-rke2-class-cluster-v1beta1.yaml" : "./fixtures/docker/capd-rke2-class-cluster.yaml"
+  const dockerAuthUsernameBase64 = btoa(Cypress.expose("docker_auth_username"))
+  const dockerAuthPasswordBase64 = btoa(Cypress.expose("docker_auth_password"))
 
   beforeEach(() => {
     cy.login();
     cy.burgerMenuOperate('open');
   });
 
-  context('Pre-Upgrade', () => {
-    if (isRancherManagerVersion('2.11')) {
-      it('Setup the namespace for importing', () => {
-        cy.namespaceAutoImport('Disable');
-      })
-
+  context('Pre-Upgrade Resources and Cluster creation', () => {
+    if (isRancherManagerVersion('2.13')) {
       it('Create Docker Auth Secret', () => {
         // Prevention for Docker.io rate limiting
         cy.readFile('./fixtures/docker/capd-auth-token-secret.yaml').then((data) => {
           data = data.replace(/replace_cluster_docker_auth_username/, dockerAuthUsernameBase64)
           data = data.replace(/replace_cluster_docker_auth_password/, dockerAuthPasswordBase64)
-          cy.importYAML(data, capiClustersNS)
+          cy.importYAML(data, vars.capiClustersNS)
         })
       });
 
-      qase(91,
-        it('Add CAPD RKE2 ClusterClass Fleet Repo', () => {
-          cy.addFleetGitRepo(clusterClassRepoName, turtlesRepoUrl, 'main', classesPath, 'capi-classes')
-          // Go to CAPI > ClusterClass to ensure the clusterclass is created
-          cy.checkCAPIClusterClass(classNamePrefix);
-        })
-      );
 
+      it('Add CAPD RKE2 ClusterClass Fleet Repo', () => {
+        cy.addFleetGitRepo(clusterClassRepoName, vars.turtlesRepoUrl, vars.classBranch, classesPath, vars.capiClassesNS)
+        // Go to CAPI > ClusterClass to ensure the clusterclass is created
+        cy.checkCAPIClusterClass(classNamePrefix);
+      })
 
       it('Import CAPD RKE2 class-clusters using YAML', () => {
-        cy.readFile('./fixtures/docker/capd-rke2-class-cluster.yaml').then((data) => {
+        cy.readFile(classClusterFileName).then((data) => {
           data = data.replace(/replace_cluster_name/g, clusterName)
-          cy.importYAML(data, capiClustersNS)
+          data = data.replace(/replace_rke2_version/g, vars.rke2Version)
+          data = data.replace(/replace_kind_version/g, vars.kindVersion)
+          cy.importYAML(data, vars.capiClustersNS)
         });
 
         // Check CAPI cluster using its name
@@ -78,7 +61,7 @@ describe('Import CAPD RKE2 Class-Cluster for Upgrade', { tags: '@upgrade' }, () 
 
         // Check cluster is Active
         cy.searchCluster(clusterName);
-        cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
+        cy.contains(new RegExp('Active.*' + clusterName), {timeout: timeout});
 
         // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
         // Ensuring cluster is provisioned also ensures all the Cluster Management > Advanced > Machines for the given cluster are Active.
@@ -87,48 +70,47 @@ describe('Import CAPD RKE2 Class-Cluster for Upgrade', { tags: '@upgrade' }, () 
     }
   })
 
-  context('Post-Upgrade', () => {
-    if (isRancherManagerVersion('2.12')) {
-      it('Upgrade turtles chart and check cluster status', () => {
-        cy.contains('local').click();
-        // This upgrades Turtles chart from v0.21.0 to latest dev version
-        cy.checkChart('Upgrade', 'Rancher Turtles', 'rancher-turtles-system', '');
+  context('Post-Upgrade Cluster checks and Resources cleanup', () => {
+    if (isRancherManagerVersion('2.14')) {
+      it('Check cluster & Resources status post-upgrade', () => {
+        // Check CAPI cluster using its name
+        cy.checkCAPICluster(clusterName);
 
-        // Check CAPI operator deployment to be removed
-        cy.exploreCluster('local');
-        cy.accesMenuSelection(['Workloads', 'Deployments']);
-        cy.typeInFilter('rancher-turtles-cluster-api-operator');
-        cy.getBySel('sortable-cell-0-1').should('not.exist');
-        cy.accesMenuSelection(['Workloads', 'Pods']);
-        cy.waitForAllRowsInState('Running', 300000);
+        // click the three-dots menu and click View YAML
+        cy.getBySel('sortable-table-0-action-button').click();
+        cy.contains('View YAML').click();
+        cy.get('.CodeMirror').then((editor) => {
+          // @ts-expect-error known error with CodeMirror
+          const text = editor[0].CodeMirror.getValue();
+          expect(text).to.include('apiVersion: cluster.x-k8s.io/v1beta2');
+        });
 
         // Check CAPI cluster is Active
         cy.searchCluster(clusterName);
-        cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
+        cy.contains(new RegExp('Active.*' + clusterName), {timeout: timeout});
         cy.checkCAPIClusterActive(clusterName, timeout);
       })
 
-      it('Install App on imported cluster', () => {
-        // Click on imported CAPD cluster
-        cy.contains(clusterName).click();
-
+      it('Install App on imported cluster', {retries: 1}, () => {
         // Install Chart
         // We install Logging chart instead of Monitoring, since this is relatively lightweight.
-        cy.checkChart('Install', 'Logging', 'cattle-logging-system');
+        cy.checkChart(clusterName, 'Install', 'Logging', 'cattle-logging-system');
       })
 
       it("Scale up imported CAPD cluster by patching class-cluster yaml", () => {
-        cy.readFile('./fixtures/docker/capd-rke2-class-cluster.yaml').then((data) => {
+        cy.readFile(classClusterFileName).then((data) => {
           data = data.replace(/replace_cluster_name/g, clusterName)
+          data = data.replace(/replace_rke2_version/g, vars.rke2Version)
+          data = data.replace(/replace_kind_version/g, vars.kindVersion)
           data = data.replace(/replicas: 2/g, 'replicas: 3')
-          cy.importYAML(data, capiClustersNS)
+          cy.importYAML(data, vars.capiClustersNS)
         });
 
         // Check CAPI cluster status
         cy.checkCAPIMenu();
         cy.contains('Machine Deployments').click();
         cy.typeInFilter(clusterName);
-        cy.get('.content > .count', { timeout: timeout }).should('have.text', '3');
+        cy.get('.content > .count', {timeout: timeout}).should('have.text', '3');
         cy.checkCAPIClusterActive(clusterName);
       })
 
@@ -141,11 +123,18 @@ describe('Import CAPD RKE2 Class-Cluster for Upgrade', { tags: '@upgrade' }, () 
         capiClusterDeletion(clusterName, timeout);
       })
 
-      it('Delete the ClusterClass fleet repo', () => {
+      it('Delete the ClusterClass fleet repo and capd resources', () => {
         // Remove the clusterclass repo
         cy.removeFleetGitRepo(clusterClassRepoName);
-        // Cleanup other resources
+
+        // Cleanup capd resources
         capdResourcesCleanup();
+      })
+
+      it('Delete the Pre-upgrade resources', () => {
+        cy.removeFleetGitRepo('helm-ops');
+        cy.deleteKubernetesResource('local', ['Storage', 'ConfigMaps'], 'docker-rke2-lb-config', vars.capiClustersNS);
+        cy.deleteKubernetesResource('local', ['Apps', 'Repositories'], 'turtles-providers-chart');
       })
     }
   })

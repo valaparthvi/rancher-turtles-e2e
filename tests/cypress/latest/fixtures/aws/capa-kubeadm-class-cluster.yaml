@@ -1,4 +1,4 @@
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: Cluster
 metadata:
   labels:
@@ -13,8 +13,9 @@ spec:
       cidrBlocks:
       - 192.168.0.0/16
   topology:
-    class: aws-kubeadm-example
-    classNamespace: capi-classes
+    classRef:
+      name: aws-kubeadm-example
+      namespace: capi-classes
     controlPlane:
       replicas: 3
     variables:
@@ -29,8 +30,8 @@ spec:
     - name: awsClusterIdentityName
       value: cluster-identity
     - name: amiID
-      value: ami-0ac1df8d2f90a496c # Private copy of ami-0988c3c36e3080c43 from eu-west-2
-    version: v1.31.0
+      value: replace_amiID
+    version: replace_k8sVersion
     workers:
       machineDeployments:
       - class: default-worker

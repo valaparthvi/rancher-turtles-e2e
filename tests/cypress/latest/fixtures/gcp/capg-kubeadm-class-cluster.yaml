@@ -1,4 +1,4 @@
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: Cluster
 metadata:
   labels:
@@ -13,8 +13,9 @@ spec:
       cidrBlocks:
       - 192.168.0.0/16
   topology:
-    class: gcp-kubeadm-example
-    classNamespace: capi-classes
+    classRef:
+      name: gcp-kubeadm-example
+      namespace: capi-classes
     controlPlane:
       replicas: 3
     workers:
@@ -33,5 +34,5 @@ spec:
       value:
         - asia-south2-a
     - name: imageId
-      value: projects/replace_gcp_project/global/images/cluster-api-ubuntu-2404-v1-31-4-1749799816
-    version: v1.31.4
+      value: projects/replace_gcp_project/global/images/replace_gcpImageId
+    version: replace_k8sVersion

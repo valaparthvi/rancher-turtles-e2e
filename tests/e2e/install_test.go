@@ -15,6 +15,7 @@ limitations under the License.
 package e2e_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -27,34 +28,19 @@ import (
 	"github.com/rancher-sandbox/ele-testhelpers/tools"
 )
 
-func rolloutDeployment(ns, d string) {
-	// NOTE: 1st or 2nd rollout command can sporadically fail, so better to use Eventually here
-	Eventually(func() string {
-		status, _ := kubectl.Run("rollout", "restart", "deployment/"+d,
-			"--namespace", ns)
-		return status
-	}, tools.SetTimeout(1*time.Minute), 20*time.Second).Should(ContainSubstring("restarted"))
+func waitForResourceCondition(ns, resource, condition string) {
+	// Wait for resource to be created
+	status, err := kubectl.Run("wait", "--namespace", ns, "--for=create", resource, "--timeout=300s")
+	GinkgoWriter.Printf("kubectl wait --for=create %s/%s: %s", ns, resource, status)
+	Expect(err).To(Not(HaveOccurred()), "kubectl wait --for=create %s failed: %s", resource, status)
 
-	// Wait for deployment to be restarted
-	Eventually(func() string {
-		status, _ := kubectl.Run("rollout", "status", "deployment/"+d,
-			"--namespace", ns)
-		return status
-	}, tools.SetTimeout(2*time.Minute), 30*time.Second).Should(ContainSubstring("successfully rolled out"))
+	// Wait for the requested condition
+	status, err = kubectl.Run("wait", "--namespace", ns, "--for=condition="+condition, resource, "--timeout=300s")
+	GinkgoWriter.Printf("kubectl wait --for=condition=%s %s/%s: %s", condition, ns, resource, status)
+	Expect(err).To(Not(HaveOccurred()), "kubectl wait --for=condition=%s %s failed: %s", condition, resource, status)
 }
 
 var _ = Describe("E2E - Install/Upgrade Rancher Manager", Label("install", "upgrade"), func() {
-	// Create kubectl context
-	// Default timeout is too small, so New() cannot be used
-	k := &kubectl.Kubectl{
-		Namespace:    "",
-		PollTimeout:  tools.SetTimeout(300 * time.Second),
-		PollInterval: 500 * time.Millisecond,
-	}
-
-	// Define local Kubeconfig file
-	localKubeconfig := os.Getenv("HOME") + "/.kube/config"
-
 	It("Install/Upgrade Rancher Manager", func() {
 		if Label("install").MatchesLabelFilter(GinkgoLabelFilter()) {
 			By("Installing K3s", func() {
@@ -66,7 +52,7 @@ var _ = Describe("E2E - Install/Upgrade Rancher Manager", Label("install", "upgr
 
 				// Set command and arguments
 				installCmd := exec.Command("sh", fileName)
-				installCmd.Env = append(os.Environ(), "INSTALL_K3S_EXEC=--disable metrics-server")
+				installCmd.Env = append(os.Environ(), "INSTALL_K3S_EXEC=--disable metrics-server --write-kubeconfig-mode 0644", "INSTALL_K3S_SKIP_SELINUX_RPM=true")
 
 				// Retry in case of (sporadic) failure...
 				count := 1
@@ -87,28 +73,14 @@ var _ = Describe("E2E - Install/Upgrade Rancher Manager", Label("install", "upgr
 				time.Sleep(tools.SetTimeout(20 * time.Second))
 			})
 
-			By("Waiting for K3s to be started", func() {
-				// Wait for all pods to be started
-				checkList := [][]string{
-					{"kube-system", "app=local-path-provisioner"},
-					{"kube-system", "k8s-app=kube-dns"},
-					{"kube-system", "app.kubernetes.io/name=traefik"},
-					{"kube-system", "svccontroller.k3s.cattle.io/svcname=traefik"},
-				}
-				Eventually(func() error {
-					return rancher.CheckPod(k, checkList)
-				}, tools.SetTimeout(4*time.Minute), 30*time.Second).Should(BeNil())
+			By("Waiting for K3s resources", func() {
+				waitForResourceCondition("kube-system", "deployment/local-path-provisioner", "Available")
+				waitForResourceCondition("kube-system", "deployment/coredns", "Available")
+				waitForResourceCondition("kube-system", "deployment/traefik", "Available")
 			})
 
 			By("Configuring Kubeconfig file", func() {
-				// Copy K3s file in ~/.kube/config
-				// NOTE: don't check for error, as it will happen anyway (only K3s is installed at a time)
-				file, _ := exec.Command("bash", "-c", "ls /etc/rancher/k3s/k3s.yaml").Output()
-				Expect(file).To(Not(BeEmpty()))
-				err := tools.CopyFile(strings.Trim(string(file), "\n"), localKubeconfig)
-				Expect(err).To(Not(HaveOccurred()))
-
-				err = os.Setenv("KUBECONFIG", localKubeconfig)
+				err := os.Setenv("KUBECONFIG", "/etc/rancher/k3s/k3s.yaml")
 				Expect(err).To(Not(HaveOccurred()))
 			})
 
@@ -121,88 +93,63 @@ var _ = Describe("E2E - Install/Upgrade Rancher Manager", Label("install", "upgr
 					"upgrade", "--install", "cert-manager", "jetstack/cert-manager",
 					"--namespace", "cert-manager",
 					"--create-namespace",
-					"--set", "installCRDs=true",
+					"--set", "crds.enabled=true",
 					"--wait", "--wait-for-jobs",
 				}
 
 				RunHelmCmdWithRetry(flags...)
 
-				checkList := [][]string{
-					{"cert-manager", "app.kubernetes.io/component=controller"},
-					{"cert-manager", "app.kubernetes.io/component=webhook"},
-					{"cert-manager", "app.kubernetes.io/component=cainjector"},
-				}
-				Eventually(func() error {
-					return rancher.CheckPod(k, checkList)
-				}, tools.SetTimeout(4*time.Minute), 30*time.Second).Should(BeNil())
+				waitForResourceCondition("cert-manager", "deployment/cert-manager", "Available")
 			})
 		}
-		// Re-define Kubeconfig file in case of upgrade test (ginkgo label != install)
-		err := os.Setenv("KUBECONFIG", localKubeconfig)
-		Expect(err).To(Not(HaveOccurred()))
+
 		By("Installing/Upgrading Rancher Manager", func() {
-			err := rancher.DeployRancherManager(rancherHostname, rancherChannel, rancherVersion, rancherHeadVersion, "none", "none")
+			// Used for providing artifical system chart during install/upgrade
+			var extraFlags []string = nil
+			if (isRancherManagerVersion(">=2.13")) && turtlesDevChart {
+				extraEnvIndex := 1
+				// For prime-alpha and prime-rc channels extraEnvIndex needs to be shifted
+				// Ref. https://github.com/rancher-sandbox/ele-testhelpers/blob/main/rancher/install.go#L93
+				if strings.Contains(rancherChannel, "prime-") {
+					extraEnvIndex = 2
+				}
+
+				rancherPointVersion := os.Getenv("RANCHER_POINT_VERSION")
+				entries := []struct {
+					name  string
+					value string
+				}{
+					{"CATTLE_CHART_DEFAULT_URL", "http://" + rancherHostname + ":4080" + "/git/charts"}, // Can we leave it hardcoded?
+					{"CATTLE_CHART_DEFAULT_BRANCH", "dev-v" + rancherPointVersion},
+					{"CATTLE_RANCHER_TURTLES_VERSION", "108.0.0+up99.99.99"}, // Ensure using custom built turtles
+				}
+
+				extraFlags = []string{}
+				for i, e := range entries {
+					idx := extraEnvIndex + i
+					extraFlags = append(extraFlags,
+						"--set", fmt.Sprintf("extraEnv[%d].name=%s", idx, e.name),
+						"--set-string", fmt.Sprintf("extraEnv[%d].value=%s", idx, e.value),
+					)
+				}
+				// Log the extra flags
+				GinkgoWriter.Write([]byte(strings.Join(extraFlags, " ") + "\n"))
+			}
+
+			// Skip when upgrade
+			if Label("install").MatchesLabelFilter(GinkgoLabelFilter()) && isUpgradeTest {
+				extraFlags = nil
+			}
+
+			err := rancher.DeployRancherManager(rancherHostname, rancherChannel, rancherVersion, rancherHeadVersion, "none", "none", extraFlags)
 			Expect(err).To(Not(HaveOccurred()))
 
-			// Wait for all pods to be started
-			checkList := [][]string{
-				{"cattle-system", "app=rancher"},
-				{"cattle-fleet-local-system", "app=fleet-agent"},
-				{"cattle-system", "app=rancher-webhook"},
+			waitForResourceCondition("cattle-system", "deployments/rancher-webhook", "Available")
+
+			if isRancherManagerVersion(">=2.13") {
+				waitForResourceCondition("cattle-turtles-system", "deployments/rancher-turtles-controller-manager", "Available")
+				waitForResourceCondition("cattle-capi-system", "deployments/capi-controller-manager", "Available")
 			}
-			Eventually(func() error {
-				return rancher.CheckPod(k, checkList)
-			}, tools.SetTimeout(4*time.Minute), 30*time.Second).Should(BeNil())
-
-			// A bit dirty be better to wait a little here for all to be correctly started
-			time.Sleep(2 * time.Minute)
 		})
-
-		if Label("install").MatchesLabelFilter(GinkgoLabelFilter()) {
-			By("Configuring kubectl to use Rancher admin user", func() {
-				// Getting internal username for admin
-				internalUsername, err := kubectl.Run("get", "user",
-					"-o", "jsonpath={.items[?(@.username==\"admin\")].metadata.name}",
-				)
-				Expect(err).To(Not(HaveOccurred()))
-				Expect(internalUsername).To(Not(BeEmpty()))
-
-				// Add token in Rancher Manager
-				err = tools.Sed("%ADMIN_USER%", internalUsername, ciTokenYaml)
-				Expect(err).To(Not(HaveOccurred()))
-				err = kubectl.Apply("default", ciTokenYaml)
-				Expect(err).To(Not(HaveOccurred()))
-
-				// Getting Rancher Manager local cluster CA
-				// NOTE: loop until the cmd return something, it could take some time
-				var rancherCA string
-				Eventually(func() error {
-					rancherCA, err = kubectl.Run("get", "secret",
-						"--namespace", "cattle-system",
-						"tls-rancher-ingress",
-						"-o", "jsonpath={.data.tls\\.crt}",
-					)
-					return err
-				}, tools.SetTimeout(2*time.Minute), 5*time.Second).Should(Not(HaveOccurred()))
-
-				// Copy skel file for ~/.kube/config
-				err = tools.CopyFile(localKubeconfigYaml, localKubeconfig)
-				Expect(err).To(Not(HaveOccurred()))
-
-				// Create kubeconfig for local cluster
-				err = tools.Sed("%RANCHER_URL%", rancherHostname, localKubeconfig)
-				Expect(err).To(Not(HaveOccurred()))
-				err = tools.Sed("%RANCHER_CA%", rancherCA, localKubeconfig)
-				Expect(err).To(Not(HaveOccurred()))
-
-				// Set correct file permissions
-				_ = exec.Command("chmod", "0600", localKubeconfig).Run()
-
-				// Remove the "old" kubeconfig file to force the use of the new one
-				// NOTE: in fact move it, just to keep it in case of issue
-				// Also don't check the returned error, as it will always not equal 0
-				_ = exec.Command("bash", "-c", "sudo mv -f /etc/rancher/k3s/k3s.yaml ~/").Run()
-			})
-		}
 	})
 })

@@ -1,12 +1,14 @@
-import { defineConfig } from 'cypress'
-import { afterSpecHook } from 'cypress-qase-reporter/hooks';
-import { writeFileSync } from 'fs';
+import {defineConfig} from 'cypress'
+import {afterSpecHook} from 'cypress-qase-reporter/hooks';
+import {writeFileSync} from 'fs';
+import {plugin as cypressGrepPlugin} from '@cypress/grep/plugin';
 
 const qaseAPIToken = process.env.QASE_API_TOKEN
 
 export default defineConfig({
   defaultCommandTimeout: 30000,
   video: true,
+  allowCypressEnv: false,
   experimentalMemoryManagement: true,
   reporter: 'cypress-multi-reporters',
   reporterOptions: {
@@ -34,14 +36,13 @@ export default defineConfig({
       },
     },
   },
-  env: {
+  expose: {
     "grepFilterSpecs": true
   },
   e2e: {
     // We've imported your old cypress plugins here.
     // You may want to clean this up later by importing these.
     setupNodeEvents(on, config) {
-
       // Help for memory issues.
       // Ref: https://www.bigbinary.com/blog/how-we-fixed-the-cypress-out-of-memory-error-in-chromium-browsers
       on("before:browser:launch", (browser, launchOptions) => {
@@ -55,7 +56,6 @@ export default defineConfig({
         return launchOptions;
       });
       require('./plugins/index.ts')(on, config);
-      require('@cypress/grep/src/plugin')(config);
       require('cypress-qase-reporter/plugin')(on, config);
       require('cypress-qase-reporter/metadata')(on);
       on('after:spec', async (spec, results) => {
@@ -71,7 +71,7 @@ export default defineConfig({
         const qaseRunId = process.env.QASE_TESTOPS_RUN_ID;
         if (qaseRunId) {
           // process.stdout.write(`QASE_TESTOPS_RUN_ID=${qaseRunId}\n`);
-          writeFileSync('./QASE_TESTOPS_RUN_ID.txt', qaseRunId, { encoding: 'utf8' });
+          writeFileSync('./QASE_TESTOPS_RUN_ID.txt', qaseRunId, {encoding: 'utf8'});
         } else {
           // process.stdout.write('QASE_TESTOPS_RUN_ID is not set.\n');
         }
@@ -80,6 +80,14 @@ export default defineConfig({
         //   process.stdout.write(`${key}=${value}\n`);
         // }
       });
+      // Register the 'suiteLog' task
+      on('task', {
+        suiteLog(message) {
+          console.log(message);
+          return null; // Tasks must return a value or null
+        },
+      });
+      cypressGrepPlugin(config);
       return config;
     },
     supportFile: './support/e2e.ts',

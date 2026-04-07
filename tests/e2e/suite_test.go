@@ -20,18 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/rancher-sandbox/ele-testhelpers/kubectl"
 	"github.com/rancher-sandbox/ele-testhelpers/tools"
-)
-
-const (
-	ciTokenYaml         = "../assets/local-kubeconfig-token-skel.yaml"
-	localKubeconfigYaml = "../assets/local-kubeconfig-skel.yaml"
-	userName            = "root"
-	userPassword        = "r0s@pwd1"
-	vmNameRoot          = "node"
 )
 
 var (
@@ -40,12 +33,12 @@ var (
 	clusterName         string
 	clusterNS           string
 	rancherHostname     string
-	k8sVersion          string
 	rancherChannel      string
 	rancherHeadVersion  string
 	rancherLogCollector string
 	rancherVersion      string
-	testType            string
+	turtlesDevChart     bool
+	isUpgradeTest       bool
 )
 
 /**
@@ -55,8 +48,51 @@ var (
  */
 func RunHelmCmdWithRetry(s ...string) {
 	Eventually(func() error {
-		return kubectl.RunHelmBinaryWithCustomErr(s...)
+		output, err := kubectl.RunHelmBinaryWithOutput(s...)
+		GinkgoWriter.Write([]byte(output))
+		if err != nil {
+			return err
+		}
+		return nil
 	}, tools.SetTimeout(2*time.Minute), 20*time.Second).Should(Not(HaveOccurred()))
+}
+
+/**
+ * isRancherManagerVersion checks if RANCHER_VERSION satisfies a semver constraint.
+ * Assumes rancherEnv always contains version after the last "/".
+ * Examples: "head/2.13", "alpha/2.13.1-rc1", "latest/2.13.0" or "latest/devel/2.12"
+ * @param constraint Semver constraint string (e.g., ">=2.13", "<2.14", "2.13" etc.)
+ * @returns true if RANCHER_VERSION satisfies the constraint, false otherwise
+ */
+func isRancherManagerVersion(constraint string) bool {
+	rancherEnv := os.Getenv("RANCHER_VERSION")
+
+	// Better safe than sorry
+	Expect(rancherEnv).To(Not(BeEmpty()), "RANCHER_VERSION environment variable not set - test setup error")
+
+	// take everything after the last "/"
+	parts := strings.Split(rancherEnv, "/")
+
+	// it is always last member of the array
+	rancherEnv = parts[len(parts)-1]
+
+	versionStr := strings.TrimSpace(rancherEnv)
+	Expect(versionStr).To(MatchRegexp(`^\d+\.\d+`), "Last part of RANCHER_VERSION does not contain a valid version (expected at least MAJOR.MINOR)")
+
+	// Strip pre-release suffix "2.13.0-alpha8" or "2.13.0-rc1" -> "2.13.0"
+	if idx := strings.IndexAny(versionStr, "-"); idx != -1 {
+		versionStr = versionStr[:idx]
+	}
+
+	// Coerce "2.13" -> "2.13.0"
+	if strings.Count(versionStr, ".") == 1 {
+		versionStr += ".0"
+	}
+
+	v, _ := semver.NewVersion(versionStr)
+	c, _ := semver.NewConstraint(constraint)
+
+	return c.Check(v)
 }
 
 func FailWithReport(message string, callerSkip ...int) {
@@ -75,10 +111,10 @@ var _ = BeforeSuite(func() {
 	clusterName = os.Getenv("CLUSTER_NAME")
 	clusterNS = os.Getenv("CLUSTER_NS")
 	rancherHostname = os.Getenv("PUBLIC_DNS")
-	k8sVersion = os.Getenv("K8S_VERSION_TO_PROVISION")
 	rancherLogCollector = os.Getenv("RANCHER_LOG_COLLECTOR")
 	rancherVersion = os.Getenv("RANCHER_VERSION")
-	testType = os.Getenv("TEST_TYPE")
+	turtlesDevChart = os.Getenv("TURTLES_DEV_CHART") == "true"
+	isUpgradeTest = strings.Contains(os.Getenv("GREPTAGS"), "upgrade")
 
 	// Extract Rancher Manager channel/version to install
 	if rancherVersion != "" {

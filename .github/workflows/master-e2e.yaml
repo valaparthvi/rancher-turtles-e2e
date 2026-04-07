@@ -4,6 +4,7 @@ name: (template) Rancher Turtles E2E tests
 on:
   workflow_call:
     # Variables to set when calling this reusable workflow
+
     secrets:
       gcp_credentials:
         description: Credentials to use to connect
@@ -59,21 +60,20 @@ on:
       docker_registry_config:
         description: DOCKER_REGISTRY_CONFIG to perform docker login
         required: true
+      providers_oci_repo:
+        description: OCI Repo for fetching turtles providers chart
+        required: true
+      providers_stg_oci_repo:
+        description: OCI Staging repo for fetching turtles providers chart on dev and pre-prime builds
+        required: true
     inputs:
       cert-manager_version:
         description: Version of cert-manager to use
-        type: string
-      cluster_name:
-        description: Name of the management cluster (Rancher local cluster)
-        required: true
         type: string
       destroy_runner:
         description: Destroy the auto-generated self-hosted runner
         default: true
         type: boolean
-      capi_ui_version:
-        description: Version of the capi-ui-extension which will be installed
-        type: string
       rancher_log_collector:
         description: URL of the Rancher log collector script
         default: https://raw.githubusercontent.com/rancherlabs/support-tools/master/collection/rancher/v2.x/logs-collector/rancher2_logs_collector.sh
@@ -85,27 +85,20 @@ on:
         description: Install rancher turtles dev chart
         required: true
         type: boolean
-      rancher_upgrade:
-        description: Rancher Manager channel/version to upgrade to
-        type: string
       runner_template:
         description: Runner template to use
-        default: capi-e2e-ci-runner-spot-n2-highmem-16-template-v3
+        default: capi-e2e-ci-runner-spot-n2-highmem-16-template-v4
         type: string
       test_description:
         description: Short description of the test
         type: string
-      ui_account:
-        description: Account used to test RBAC role in UI
-        required: false
-        type: string
       upstream_cluster_version:
         description: Cluster upstream version where to install Rancher (K3s)
-        default: v1.31.4+k3s1
+        default: v1.34.4+k3s1
         type: string
       zone:
         description: GCP zone to host the runner
-        default: asia-south1-a
+        default: asia-south1-c
         type: string
       qase_report:
         description: Report to QASE
@@ -125,6 +118,9 @@ on:
       cluster_name_suffix:
         description: Suffix to be used in cluster name (default - github.run_number)
         type: string
+      target_build_type:
+        description: Build type for turtles_dev_chart (prime|community)
+        type: string
 
 jobs:
   determine-runner:
@@ -137,8 +133,8 @@ jobs:
         run: |
             if [[ "${{ inputs.grep_test_by_tag }}" =~ "@vsphere" ]]; then
               echo "initial-runner=vsphere" >> $GITHUB_OUTPUT
-              if [[ "${{ inputs.grep_test_by_tag }}" =~ "@full" || "${{ inputs.grep_test_by_tag }}" =~ "@short" || "${{ inputs.grep_test_by_tag }}" =~ "@upgrade" ]]; then
-                echo "ERROR: @vsphere tests cannot be combined with @full, @short and @upgrade"
+              if [[ "${{ inputs.grep_test_by_tag }}" =~ "@full" || "${{ inputs.grep_test_by_tag }}" =~ "@short" || "${{ inputs.grep_test_by_tag }}" =~ "@migration" ]]; then
+                echo "ERROR: @vsphere tests cannot be combined with @full, @short and @migration"
                 exit 1
               fi
             else
@@ -155,13 +151,13 @@ jobs:
     steps:
       # actions/checkout MUST come before auth
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Generate UUID and Runner hostname
         id: generator
         run: |
           if [[ ${{ needs.determine-runner.outputs.initial-runner }} == "vsphere" ]]; then
-            echo "uuid=vsphere" >> ${GITHUB_OUTPUT}
-            echo "runner=vsphere" >> ${GITHUB_OUTPUT}
+            echo "uuid=${{ runner.name }}" >> ${GITHUB_OUTPUT}
+            echo "runner=${{ runner.name }}" >> ${GITHUB_OUTPUT}
           else
             # NOTE: keep the runner name to less than 63 characters!
             UUID=$(uuidgen)
@@ -179,19 +175,19 @@ jobs:
           fi
       - name: Authenticate to GCP
         if: ${{ needs.determine-runner.outputs.initial-runner != 'vsphere' }}
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           credentials_json: ${{ secrets.gcp_credentials }}
       - name: Setup gcloud
         if: ${{ needs.determine-runner.outputs.initial-runner != 'vsphere' }}
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
       - name: Create runner
         if: ${{ needs.determine-runner.outputs.initial-runner != 'vsphere' }}
         run: |
           gcloud compute instances create ${{ steps.generator.outputs.runner }} \
             --source-instance-template ${{ inputs.runner_template }} \
             --zone ${{ inputs.zone }} \
-            --labels=owner=${{ github.actor }},team=highlander-qa
+            --labels=owner=${{ github.actor }},team=highlander-qa,runner=${{ github.run_number }}
       - name: Create GCP secrets
         if: ${{ needs.determine-runner.outputs.initial-runner != 'vsphere' }}
         run: |
@@ -235,12 +231,10 @@ jobs:
       # K3S flags to use for installation
       INSTALL_K3S_SKIP_ENABLE: true
       INSTALL_K3S_VERSION: ${{ inputs.upstream_cluster_version }}
-      K3S_KUBECONFIG_MODE: 0644
       # For Rancher Manager
       RANCHER_USER: admin
       RANCHER_URL: https://${{ needs.create-runner.outputs.public_dns }}/dashboard
       CERT_MANAGER_VERSION: ${{ inputs.cert-manager_version }}
-      CLUSTER_NAME: ${{ inputs.cluster_name }}
       # Qase
       QASE_API_TOKEN: ${{ secrets.qase_api_token }}
       QASE_PROJECT_CODE: RT
@@ -249,15 +243,18 @@ jobs:
       QASE_TESTOPS_RUN_DESCRIPTION: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       # Cypress
       TURTLES_REPO: rancher/turtles
+      TURTLES_BRANCH: main
+      TURTLES_CHART_DEV_VERSION: 108.0.0+up99.99.99
       CONTROLLER_IMG: localhost:5000/$TURTLES_REPO
       BROWSER: chrome
-      CYPRESS_DOCKER: 'cypress/included:15.2.0'
+      CYPRESS_DOCKER: 'cypress/included:15.11.0'
       # Inputs
-      CAPI_UI_VERSION: ${{ inputs.capi_ui_version }}
       GREPTAGS: ${{ inputs.grep_test_by_tag }}
       TURTLES_CHART_VERSION: ${{ inputs.turtles_chart_version }}
       SKIP_CLUSTER_DELETE: ${{ inputs.skip_cluster_delete }}
       CLUSTER_NAME_SUFFIX: ${{ inputs.cluster_name_suffix }}
+      BUILD_TYPE: ${{ inputs.target_build_type }}
+      TURTLES_DEV_CHART: ${{ inputs.turtles_dev_chart }}
       # Secrets
       AWS_ACCESS_KEY_ID: ${{ secrets.aws_access_key }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.aws_secret_key }}
@@ -271,17 +268,22 @@ jobs:
       DOCKER_AUTH_USERNAME: ${{ secrets.docker_auth_username }}
       DOCKER_AUTH_PASSWORD: ${{ secrets.docker_auth_password }}
       DOCKER_REGISTRY_CONFIG: ${{ secrets.docker_registry_config }}
+      PROVIDERS_OCI_REPO: ${{ secrets.providers_oci_repo }}
+      PROVIDERS_STG_OCI_REPO: ${{ secrets.providers_stg_oci_repo }}
       # Common specs: @short @vsphere @full
       SPECS: |
+        e2e/providers_setup_legacy.spec.ts
+        e2e/providers_setup.spec.ts
         e2e/capd_rke2_clusterclass.spec.ts
         e2e/capd_rke2_fleet_clusterclass.spec.ts
         e2e/capd_kubeadm_clusterclass.spec.ts
-        e2e/capd_kubeadm_ui_clusterclass.spec.ts
         e2e/azure_rke2_v2prov_cluster.spec.ts
         e2e/capv_rke2_clusterclass.spec.ts
         e2e/capv_kubeadm_clusterclass.spec.ts
         e2e/capa_rke2_clusterclass.spec.ts
         e2e/capa_kubeadm_clusterclass.spec.ts
+        e2e/capa_eks_clusterclass.spec.ts
+        e2e/capg_gke_clusterclass.spec.ts
         e2e/capg_kubeadm_clusterclass.spec.ts
         e2e/capz_aks_clusterclass.spec.ts
         e2e/capz_rke2_clusterclass.spec.ts
@@ -293,66 +295,173 @@ jobs:
           echo 'Defaults secure_path="/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin"' | sudo tee /etc/sudoers.d/0-custom_secure_path
       # To be removed if hitting pull ratelimits
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
         with:
           username: ${{ secrets.docker_auth_username }}
           password: ${{ secrets.docker_auth_password }}
       - name: Install helm
         run: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-      # Build rancher-turtles latest chart
-      - name: Check out rancher-turtles repo
+      - name: Set Rancher Manager Install version
+        run: |
+          if [[ "${{ inputs.grep_test_by_tag }}" =~ "@migration" ]]; then
+            # Required for migration tests
+            echo "RANCHER_VERSION=head/2.12" >> ${GITHUB_ENV}
+            echo "COMMON_SPECS=$(echo "${{ env.SPECS }}" | tr '\n' ' ')" >> $GITHUB_ENV
+            echo "SPECS=" >> ${GITHUB_ENV}
+          elif [[ "${{ inputs.grep_test_by_tag }}" =~ "@upgrade" ]]; then
+            # Required for upgrade tests
+            echo "RANCHER_VERSION=prime/2.13.3" >> ${GITHUB_ENV}
+            echo "COMMON_SPECS=$(echo "${{ env.SPECS }}" | tr '\n' ' ')" >> $GITHUB_ENV
+          else
+            echo "RANCHER_VERSION=${{ inputs.rancher_version }}" >> ${GITHUB_ENV}
+          fi
+      - name: Set Rancher Manager point version
         if: ${{ inputs.turtles_dev_chart == true }}
-        uses: actions/checkout@v5
+        run: |
+          if [[ "${{ env.RANCHER_VERSION }}" =~ (2\.13|2\.14) ]]; then
+            echo RANCHER_POINT_VERSION="${BASH_REMATCH[1]}" >> ${GITHUB_ENV}
+          fi
+          if [[ "${{ env.RANCHER_VERSION }}" =~ 2.12 && "${{ inputs.grep_test_by_tag }}" =~ "@migration" ]]; then
+            echo RANCHER_POINT_VERSION="2.13" >> ${GITHUB_ENV}
+          fi
+          if [[ "${{ env.RANCHER_VERSION }}" =~ 2.13 && "${{ inputs.grep_test_by_tag }}" =~ "@upgrade" ]]; then
+            echo RANCHER_POINT_VERSION="2.14" >> ${GITHUB_ENV}
+          fi
+      - name: Set rancher/turtles repo branch
+        if: ${{ inputs.turtles_dev_chart == true }}
+        run: |
+          if [[ "${{ env.RANCHER_VERSION }}" =~ 2.12 && ! "${{ inputs.grep_test_by_tag }}" =~ "@migration" ]]; then
+            echo "TURTLES_BRANCH=release-0.24" >> ${GITHUB_ENV}
+          elif [[ "${{ env.RANCHER_VERSION }}" =~ 2.13 && ! "${{ inputs.grep_test_by_tag }}" =~ "@upgrade" ]]; then
+            echo "TURTLES_BRANCH=release/v0.25" >> ${GITHUB_ENV}
+          elif [[ "${{ inputs.grep_test_by_tag }}" =~ "@migration" ]]; then
+            echo "TURTLES_BRANCH=release/v0.25" >> ${GITHUB_ENV}
+          elif [[ "${{ inputs.grep_test_by_tag }}" =~ "@upgrade" ]]; then
+            echo "TURTLES_BRANCH=${{ env.TURTLES_BRANCH }}" >> ${GITHUB_ENV}
+          else
+            echo "TURTLES_BRANCH=${{ env.TURTLES_BRANCH }}" >> ${GITHUB_ENV}
+          fi
+      - name: Set k3s Install version
+        run: |
+          if [[ "${{ env.RANCHER_VERSION }}" =~ (2\.12) ]]; then
+            echo INSTALL_K3S_VERSION="v1.32.3+k3s1" >> ${GITHUB_ENV}
+          else
+            echo INSTALL_K3S_VERSION=${{ inputs.upstream_cluster_version }} >> ${GITHUB_ENV}
+          fi
+
+      # Checkout into r/turtles repo if dev=true to build turtles and providers chart;
+      # or if it's a migration test, then to copy the provider migration script
+      - name: Check out rancher/turtles repo
+        if: ${{ inputs.turtles_dev_chart == true || contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade') }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           repository: ${{ env.TURTLES_REPO }}
+          ref: ${{ env.TURTLES_BRANCH }}
       - name: Install Go
         if: ${{ inputs.turtles_dev_chart == true }}
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           cache: false
           go-version-file: go.mod
 
-      # This step builds latest turtles chart and pushes latest turtles docker image to local docker registry
       - name: Set date variable
         run: |
           echo "TAG=$(date "+%Y.%m.%d")" >> ${GITHUB_ENV}
-      - name: Make chart
+
+      # This step builds latest turtles chart and pushes latest turtles docker image to local docker registry
+      - name: Make Turtles chart
         if: ${{ inputs.turtles_dev_chart == true }}
         run: |
-          TAG=v${{ env.TAG }} CONTROLLER_IMG=${{ env.CONTROLLER_IMG }} make e2e-image-build
-          RELEASE_TAG=v${{ env.TAG }} CONTROLLER_IMG=${{ env.CONTROLLER_IMG }} CONTROLLER_IMAGE_VERSION=v${{ env.TAG }} make build-chart
+          if [[ "${{ env.RANCHER_VERSION }}" =~ head.*/(2\.13) || "${{ env.RANCHER_VERSION }}" =~ prime.*/(2\.13|2\.14) || "${{ inputs.grep_test_by_tag }}" =~ "@migration" || "${{ inputs.grep_test_by_tag }}" =~ "@upgrade" ]]; then
+            # Inject custom image into turtles chart deployment.yaml without using the system_default_registry prefix
+            # This is needed on Pre-Prime & Prime, and 2.13 because the local registry is not accessible via system_default_registry
+            # Sed command uses range from `if` to `end` to replace templating by actual image
+            sed -i "/{{- if (contains \"sha256:\" .Values.image.tag) }}/,/{{- end}}/c\\        image: localhost:5000/rancher/turtles:v${{ env.TAG }}" \
+              charts/rancher-turtles/templates/deployment.yaml
+            # Verify the patch worked
+            if ! grep -q "image: localhost:5000/rancher/turtles:v${{ env.TAG }}" charts/rancher-turtles/templates/deployment.yaml; then
+              echo "ERROR: Failed to patch deployment.yaml with custom turtles image"
+              exit 1
+            fi
+          fi
+
+          TARGET_BUILD=${{ env.BUILD_TYPE }} TAG=v${{ env.TAG }} CONTROLLER_IMG=${{ env.CONTROLLER_IMG }} make e2e-image-build
+          RELEASE_TAG=v${{ env.TAG }} CONTROLLER_IMG=${{ env.CONTROLLER_IMG }} CONTROLLER_IMAGE_VERSION=v${{ env.TAG }} make build-chart # verify-gen
           docker run -d -p 5000:5000 --name registry registry:2
           docker push ${{ env.CONTROLLER_IMG }}:v${{ env.TAG }}
 
-      - name: Copy chart file
+      # Build providers chart to push to chartmuseum in a later step
+      - name: Make Turtles Providers Chart
+        if: ${{ (inputs.turtles_dev_chart == true && (!contains(env.RANCHER_VERSION, '2.12')) || contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade'))  }}
+        run: RELEASE_TAG=v${{ env.TAG }} make build-providers-chart
+
+      - name: Clone, build and publish artificial system charts for 2.13 onwards
+        if: ${{ (inputs.turtles_dev_chart == true && (!contains(env.RANCHER_VERSION, '2.12')) || contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade')) }}
+        run: |
+          # Install yq if not present
+          if ! command -v yq >/dev/null 2>&1; then
+            sudo curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+            sudo chmod +x /usr/local/bin/yq
+          fi
+
+          # Dir outside github workspace must be used for destroy=false persistance
+          export RANCHER_CHARTS_REPO_DIR=/tmp/system-charts/charts
+          export RANCHER_CHART_DEV_VERSION=${{ env.TURTLES_CHART_DEV_VERSION }}
+          export RANCHER_CHARTS_BASE_BRANCH=dev-v${{ env.RANCHER_POINT_VERSION }}
+          export CHART_RELEASE_DIR=${{ github.workspace }}/out/charts/rancher-turtles
+          export HELM=helm
+
+          # Script from rancher/turtles
+          chmod +x scripts/build-local-rancher-charts.sh
+          ./scripts/build-local-rancher-charts.sh
+
+          # Note allow port tcp/4080 by a firewall rule on GCP
+          docker run --name git-http-backend -d -p 4080:80 -v /tmp/system-charts:/git ynohat/git-http-backend
+
+      - name: Copy Migration Script (to be run after migration from <=2.12 to >=2.13)
+        if: ${{ contains(inputs.grep_test_by_tag, '@migration') }}
+        run: |
+          # Migration script from rancher/turtles
+          cp scripts/migrate-providers-ownership.sh /tmp
+          chmod +x /tmp/migrate-providers-ownership.sh
+
+      # Copy chart files from turtles repo to local system/runner
+      - name: Copy turtles chart files
         if: ${{ inputs.turtles_dev_chart == true }}
-        run: cp ${{ github.workspace }}/out/package/rancher-turtles-${{ env.TAG }}.tgz ${{ runner.temp }}
+        run: |
+          cp ${{ github.workspace }}/out/package/rancher-turtles-${{ env.TAG }}.tgz ${{ runner.temp }}
+
+      - name: Copy Turtles Providers chart files
+        if: ${{ (inputs.turtles_dev_chart == true && (!contains(env.RANCHER_VERSION, '2.12')) || contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade')) }}
+        run: cp ${{ github.workspace }}/out/package/rancher-turtles-providers-${{ env.TAG }}.tgz ${{ runner.temp }}
 
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Install Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           cache: false
           go-version-file: tests/go.mod
-      - name: Copy chart file for chartmuseum
+      - name: Copy turtles chart files for chartmuseum
         if: ${{ inputs.turtles_dev_chart == true }}
-        run: cp ${{ runner.temp }}/rancher-turtles-${{ env.TAG }}.tgz ${{ github.workspace }}/tests/assets
+        run: |
+          cp ${{ runner.temp }}/rancher-turtles-${{ env.TAG }}.tgz ${{ github.workspace }}/tests/assets
+      - name: Copy turtles providers chart files for chartmuseum
+        if: ${{ (inputs.turtles_dev_chart == true && (!contains(env.RANCHER_VERSION, '2.12')) || contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade')) }}
+        run: |
+          mkdir ${{ github.workspace }}/tests/assets/providers
+          cp ${{ runner.temp }}/rancher-turtles-providers-${{ env.TAG }}.tgz ${{ github.workspace }}/tests/assets/providers
+      # Copy migration script from tmp to r/rancher-turtles-e2e workspace
+      - name: Copy Migration Script to r/rancher-turtles-e2e workspace
+        if: ${{ contains(inputs.grep_test_by_tag, '@migration') }}
+        run: cp /tmp/migrate-providers-ownership.sh ${{ github.workspace }}/tests/assets/
       - name: Inject kube-vip controlplane IP for vsphere into capv-helm-values.yaml
-        if: ${{ needs.create-runner.outputs.uuid == 'vsphere' }}
+        if: contains(needs.create-runner.outputs.uuid, 'vsphere')
         run: |
           # A round-robin distribution of 3 available control plane IPs for kube-vip
           INDEX=$(((${{ github.run_number }} % 3) + 1))
           CP_ENDPOINT_IP=$(echo ${{ secrets.vsphere_endpoints_list }} | cut -d' ' -f${INDEX})
           sed -i "s/replace_cluster_control_plane_endpoint_ip/${CP_ENDPOINT_IP}/" tests/cypress/latest/fixtures/vsphere/capv-helm-values.yaml
-      - name: Set Rancher Manager Install version
-        run: |
-          if [[ "${{ inputs.grep_test_by_tag }}" =~ "@upgrade" ]]; then
-            # Required for upgrade tests
-            echo "RANCHER_VERSION=head/2.11" >> ${GITHUB_ENV}
-          else
-            echo "RANCHER_VERSION=${{ inputs.rancher_version }}" >> ${GITHUB_ENV}
-          fi
       - name: Install Rancher Manager
         env:
           RANCHER_VERSION: ${{ env.RANCHER_VERSION }}
@@ -379,12 +488,13 @@ jobs:
         if: ${{ inputs.turtles_dev_chart == true }}
         run: cd tests && make e2e-install-chartmuseum
       - name: Setup node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: current
       - name: Cypress tests
         id: cypress
         env:
+          TURTLES_BRANCH: ${{ env.TURTLES_BRANCH }}
           RANCHER_VERSION: ${{ env.RANCHER_VERSION }}
           RANCHER_PASSWORD: ${{ secrets.rancher_password }}
           SPEC: |
@@ -392,7 +502,7 @@ jobs:
             e2e/turtles_chart.spec.ts
             e2e/turtles_ui_extension.spec.ts
             e2e/menu.spec.ts
-            e2e/providers_setup.spec.ts
+            e2e/capd_rke2_migration_clusterclass.spec.ts
             ${{ env.SPECS }}
             e2e/capd_rke2_upgrade_clusterclass.spec.ts
         run: |
@@ -402,18 +512,18 @@ jobs:
           cd tests && make start-cypress-tests
       - name: Upload Cypress screenshots
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
-          name: cypress-screenshots-${{ inputs.cluster_name }}
+          name: cypress-screenshots-${{ github.run_number }}
           path: tests/cypress/latest/screenshots
           retention-days: 7
           if-no-files-found: ignore
       - name: Upload Cypress videos
         # Test run video is always captured, so this action uses "always()" condition
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
-          name: cypress-videos-${{ inputs.cluster_name }}
+          name: cypress-videos-${{ github.run_number }}
           path: tests/cypress/latest/videos
           retention-days: 7
       - name: Store QASE_TESTOPS_RUN_ID for later use
@@ -424,16 +534,24 @@ jobs:
             QASE_TESTOPS_RUN_ID=$(cat tests/cypress/latest/QASE_TESTOPS_RUN_ID.txt)
             echo "qase_run_id=${QASE_TESTOPS_RUN_ID}" >> ${GITHUB_OUTPUT}
           fi
-      - name: Upgrade Rancher Manager
-        id: rancher_upgrade
+      - name: Set Rancher Manager Upgrade version
+        if: ${{ contains(inputs.grep_test_by_tag, '@migration') }}
+        run: |
+          echo "RANCHER_VERSION=head/2.13" >> ${GITHUB_ENV}
+      - name: Set Rancher Manager Upgrade version
         if: ${{ contains(inputs.grep_test_by_tag, '@upgrade') }}
+        run: |
+          echo "RANCHER_VERSION=prime-alpha/2.14.0-alpha13" >> ${GITHUB_ENV}
+      - name: Upgrade Rancher Manager
+        if: ${{ contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade') }}
         env:
-          RANCHER_VERSION: head/2.12
+          RANCHER_VERSION: ${{ env.RANCHER_VERSION }}
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
           PUBLIC_DNS: ${{ needs.create-runner.outputs.public_dns }}
         run: cd tests && make e2e-upgrade-rancher
       - name: Extract component versions/informations after Rancher Upgrade
         id: upgraded_component
-        if: ${{ contains(inputs.grep_test_by_tag, '@upgrade') }}
+        if: ${{ contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade') }}
         run: |
           # Extract Rancher Manager image version
           RM_UPGRADED_IMAGE_VERSION=$(kubectl get pod \
@@ -443,37 +561,60 @@ jobs:
           # Export values
           echo "rm_upgraded_image_version=${RM_UPGRADED_IMAGE_VERSION}" >> ${GITHUB_OUTPUT}
           echo "rm_upgraded_version=${{ env.RANCHER_VERSION }}" >> ${GITHUB_OUTPUT}
+      - name: Migration script
+        if: ${{ contains(inputs.grep_test_by_tag, '@migration') }}
+        run: |
+          ${{ github.workspace }}/tests/assets/migrate-providers-ownership.sh --adopt docker:capd-system
       - name: Cypress tests - Upgraded Rancher
-        if: ${{ contains(inputs.grep_test_by_tag, '@upgrade') }}
+        if: ${{ contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade') }}
         env:
           RANCHER_VERSION: ${{ env.RANCHER_VERSION }}
           RANCHER_PASSWORD: ${{ secrets.rancher_password }}
           QASE_TESTOPS_RUN_ID: ${{ steps.qase_run_id.outputs.qase_run_id }}
           SPEC: |
+            e2e/capd_rke2_migration_clusterclass.spec.ts
+            e2e/post_upgrade_setup.spec.ts
             e2e/capd_rke2_upgrade_clusterclass.spec.ts
-            ${{ env.SPECS }}
+            ${{ env.COMMON_SPECS }}
         run: |
           if [ ${{ inputs.turtles_dev_chart }} == true ]; then
             export CHARTMUSEUM_REPO=http://${{ needs.create-runner.outputs.public_dns }}
           fi
           cd tests && make start-cypress-tests
       - name: Upload Cypress screenshots (after-upgrade)
-        if: ${{ contains(inputs.grep_test_by_tag, '@upgrade') && failure() }}
-        uses: actions/upload-artifact@v4
+        if: ${{ (contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade')) && failure() }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
-          name: cypress-screenshots-after-upgrade-${{ inputs.cluster_name }}
+          name: cypress-screenshots-after-upgrade-${{ github.run_number }}
           path: tests/cypress/latest/screenshots
           retention-days: 7
           if-no-files-found: ignore
       - name: Upload Cypress videos (after-upgrade)
         # Test run video is always captured, so this action uses "always()" condition
-        if: ${{ contains(inputs.grep_test_by_tag, '@upgrade') && always() }}
-        uses: actions/upload-artifact@v4
+        if: ${{ (contains(inputs.grep_test_by_tag, '@migration') || contains(inputs.grep_test_by_tag, '@upgrade')) && always() }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
-          name: cypress-videos-after-upgrade-${{ inputs.cluster_name }}
+          name: cypress-videos-after-upgrade-${{ github.run_number }}
           path: tests/cypress/latest/videos
           retention-days: 7
+      - name: Collect logs
+        env:
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+          RANCHER_LOG_COLLECTOR: ${{ github.workspace }}/.github/scripts/collect-rancher-logs.sh
+        if: ${{ always() }}
+        run: |
+          chmod +x ${{ env.RANCHER_LOG_COLLECTOR }}
+          bash ${{ env.RANCHER_LOG_COLLECTOR }}
+      - name: Upload cluster logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: support-logs
+          path: ${{ github.workspace }}/logs/*
+          if-no-files-found: ignore
       - name: Add summary
+        env:
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
         if: ${{ always() }}
         run: |
           # Add summary
@@ -483,12 +624,31 @@ jobs:
           echo "Rancher Manager Image: ${{ steps.component.outputs.rm_image_version }}" >> ${GITHUB_STEP_SUMMARY}
           echo "Rancher Manager Version: ${{ steps.component.outputs.rm_version }}" >> ${GITHUB_STEP_SUMMARY}
           echo "CertManager Image: ${{ steps.component.outputs.cert_manager_image_version }}" >> ${GITHUB_STEP_SUMMARY}
-          UI_VERSION=$(helm list -n cattle-ui-plugin-system -o json 2> /dev/null |  jq -r '.[] | .chart')
-          TURTLES_VERSION=$(helm list -n rancher-turtles-system -o json 2> /dev/null | jq -r '.[] | .chart')
-          echo "CAPI UI Extension Version: $UI_VERSION" >> ${GITHUB_STEP_SUMMARY}
+          if [[ "${{ env.RANCHER_VERSION }}" =~ (2\.13|2\.14) ]]; then
+            TURTLES_NAMESPACE="cattle-turtles-system"
+          else
+            TURTLES_NAMESPACE="rancher-turtles-system"
+          fi
+          TURTLES_VERSION=$(helm list -n $TURTLES_NAMESPACE -o json 2> /dev/null | jq -r '.[] | .chart' | head -n 1)
           echo "Rancher Turtles Installed/Upgraded Chart Version: $TURTLES_VERSION" >> ${GITHUB_STEP_SUMMARY}
-          if [[ "${{ inputs.grep_test_by_tag }}" =~ "@upgrade" ]]; then
+          if [[ ${{ inputs.turtles_dev_chart }} == true ]]; then
+            echo "Rancher Turtles Dev Build Type: ${{ inputs.target_build_type }}" >> ${GITHUB_STEP_SUMMARY}
+          fi
+          # Only add provider section if providers exist
+          PROVIDER_DATA=$(kubectl get capiproviders.turtles-capi.cattle.io -A \
+            -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.namespace}{" "}{.spec.version}{"\n"}{end}' 2>/dev/null)
+          # Format provider data into a markdown table
+          if [[ -n "$PROVIDER_DATA" ]]; then
+            PROVIDER_VERSIONS=$(
+              printf "| NAME | NAMESPACE | VERSION |\n|:---|:---|:---|\n"
+              echo "$PROVIDER_DATA" | awk '{printf "| %-25s | %-35s | %-8s |\n", $1, $2, $3}'
+            )
+            echo "Installed CAPI Providers:" >> ${GITHUB_STEP_SUMMARY}
+            echo "${PROVIDER_VERSIONS}" >> ${GITHUB_STEP_SUMMARY}
+          fi
+          if [[ "${{ inputs.grep_test_by_tag }}" =~ "@migration" || "${{ inputs.grep_test_by_tag }}" =~ "@upgrade" ]]; then
             echo "### Rancher Manager Upgrade Information" >> ${GITHUB_STEP_SUMMARY}
+            echo "Rancher Manager Upgraded Version: ${{ steps.upgraded_component.outputs.rm_upgraded_version }}" >> ${GITHUB_STEP_SUMMARY}
             echo "Rancher Manager Upgraded Image: ${{ steps.upgraded_component.outputs.rm_upgraded_image_version }}" >> ${GITHUB_STEP_SUMMARY}
           fi
           echo "### Kubernetes" >> ${GITHUB_STEP_SUMMARY}
@@ -501,19 +661,19 @@ jobs:
           fi
 
   delete-runner:
-    if: ${{ always() && needs.create-runner.outputs.uuid != 'vsphere' }}
+    if: ${{ always() && contains(needs.create-runner.outputs.uuid, 'vsphere') == false }}
     needs: [create-runner, e2e]
     runs-on: ubuntu-latest
     steps:
       # actions/checkout MUST come before auth
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Authenticate to GCP
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           credentials_json: ${{ secrets.gcp_credentials }}
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
       - name: Delete GCP secrets
         run: |
           gcloud --quiet secrets delete PAT_TOKEN_${{ needs.create-runner.outputs.uuid }} || true
@@ -545,9 +705,9 @@ jobs:
           fi
           echo "QASE run $RUN_ID marked as Completed" >> ${GITHUB_STEP_SUMMARY}
   cleanup-vsphere-runner:
-    if: ${{ always() && needs.create-runner.outputs.uuid == 'vsphere' && inputs.destroy_runner == true }}
+    if: ${{ always() && contains(needs.create-runner.outputs.uuid, 'vsphere') && inputs.destroy_runner == true }}
     needs: [create-runner, e2e]
-    runs-on: vsphere
+    runs-on: ${{ needs.create-runner.outputs.uuid }}
     steps:
       - name: Cleanup vsphere runner
         env:

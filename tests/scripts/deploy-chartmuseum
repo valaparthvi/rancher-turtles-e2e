@@ -38,13 +38,11 @@ curl https://raw.githubusercontent.com/helm/chartmuseum/main/scripts/get-chartmu
 systemctl start chartmuseum
 
 # Download and install helm-push plugin and do not fail if exists
-helm plugin install https://github.com/chartmuseum/helm-push.git || true
+helm plugin install https://github.com/chartmuseum/helm-push.git --version 0.10.4 || true
 
 # Create a local helm repo
 helm repo add chartmuseum http://localhost:8080
 
 # Push helm chart to local repo even when exists already
-helm cm-push --force ./assets/rancher-turtles-*.tgz chartmuseum
-# For chart-upgrade checks
-helm pull https://github.com/rancher/turtles/releases/download/v0.21.0/rancher-turtles-0.21.0.tgz
-helm cm-push --force rancher-turtles-0.21.0.tgz chartmuseum
+helm cm-push --force ./assets/rancher-turtles-*.tgz chartmuseum || true
+helm cm-push --force ./assets/providers/rancher-turtles-providers-*.tgz chartmuseum || true

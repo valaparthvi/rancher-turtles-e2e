@@ -17,8 +17,21 @@ limitations under the License.
 import 'cypress-file-upload';
 import * as cypressLib from '@rancher-ecp-qa/cypress-library';
 import jsyaml from 'js-yaml';
+import yaml from 'js-yaml';
 import _ from 'lodash';
-import { isRancherManagerVersion } from '~/support/utils';
+import {
+  capiNamespace,
+  isAPIv1beta1,
+  isHeadBuild,
+  isMigration,
+  isPrePrimeChannel,
+  isPreRelease,
+  isPrimeChannel,
+  isRancherManagerVersion,
+  isTurtlesDevChart,
+  isTurtlesPrimeBuild
+} from '~/support/utils';
+import {vars} from '~/support/variables'
 
 // Generic commands
 // Go to specific Sub Menu from Access Menu
@@ -69,27 +82,39 @@ Cypress.Commands.add('clusterAutoImport', (clusterName, mode) => {
 });
 
 // Command to create namespace
-Cypress.Commands.add('createNamespace', (namespace) => {
-  cy.contains('local')
-    .click();
-  cypressLib.accesMenu('Projects/Namespaces');
-  cy.contains('Create Project').should('be.visible');
+Cypress.Commands.add('createNamespace', (namespaces: string[]) => {
+  namespaces.forEach((namespace) => {
+    cy.task('suiteLog', `Creating Namespace: ${namespace}`);
+    cy.burgerMenuOperate('open');
+    cy.contains('local')
+      .click();
+    cypressLib.accesMenu('Projects/Namespaces');
+    cy.contains('Create Project').should('be.visible');
 
-  // Workaround for 2.12, find a row with 'Not in a Project' and press button 'Create Namespace'
-  // Ref. https://github.com/rancher/dashboard/issues/15193
-  // cy.setNamespace('Not', 'all_orphans');
-  cy.contains('Not in a Project').parents('tr').find('a').contains('Create Namespace').click();
+    // Workaround for 2.12, find a row with 'Not in a Project' and press button 'Create Namespace'
+    // Ref. https://github.com/rancher/dashboard/issues/15193
+    // cy.setNamespace('Not', 'all_orphans');
+    cy.contains('Not in a Project').parents('tr').find('a').contains('Create Namespace').click();
 
-  cy.typeValue('Name', namespace);
-  cy.clickButton('Create');
-  cy.contains(new RegExp('Active.*' + namespace));
-  cy.namespaceReset();
+    cy.typeValue('Name', namespace);
+    cy.clickButton('Create');
+    cy.contains(new RegExp('Active.*' + namespace));
+    cy.task('suiteLog', `Namespace created: ${namespace}`);
+    cy.namespaceReset();
+  })
+});
+
+// Command to create namespace
+Cypress.Commands.add('deleteNamespace', (namespaces: string[]) => {
+  namespaces.forEach((namespace) => {
+    cy.deleteKubernetesResource('local', ['Projects/Namespaces'], namespace);
+  })
 });
 
 // Command to set namespace selection
 Cypress.Commands.add('setNamespace', (namespace, namespaceID) => {
   const nsID: string = namespaceID || (namespace.startsWith('Project:')) ? '' : `ns_${namespace}`
-  cy.getBySel('namespaces-dropdown', { timeout: 18000 }).trigger('click');
+  cy.getBySel('namespaces-dropdown', {timeout: 18000}).click();
   cy.get('.ns-clear').click();
   cy.get('.ns-options').within(() => {
     if (nsID != '') {
@@ -273,7 +298,7 @@ Cypress.Commands.add('checkCAPICluster', (clusterName) => {
   cy.checkCAPIMenu();
   cy.getBySel('button-group-child-1').click();
   cy.typeInFilter(clusterName);
-  cy.getBySel('sortable-cell-0-1', { timeout: 90000 }).should('exist');
+  cy.getBySel('sortable-cell-0-1', {timeout: 90000}).should('exist');
 });
 
 // Command to check CAPI cluster presence under CAPI Menu
@@ -282,17 +307,19 @@ Cypress.Commands.add('checkCAPIClusterClass', (className) => {
   cy.contains('Cluster Classes').click();
   cy.getBySel('button-group-child-1').click();
   cy.typeInFilter(className);
-  cy.waitForAllRowsInState('Active');
+  cy.waitForAllRowsInState('Active', 20000);
 });
 
 // Command to check CAPI cluster Active status
-Cypress.Commands.add('checkCAPIClusterActive', (clusterName, timeout = 90000) => {
+Cypress.Commands.add('checkCAPIClusterActive', (clusterName, timeout = 90000, skipMDCheck = false) => {
   cy.checkCAPIMenu();
-  cy.contains(new RegExp('Provisioned.*' + clusterName), { timeout: timeout });
-  cy.contains('Machine Deployments').click();
-  cy.contains(new RegExp('Running.*' + clusterName), { timeout: timeout });
-  cy.contains('Machine Sets').click();
-  cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
+  cy.contains(new RegExp('Provisioned.*' + clusterName), {timeout: timeout});
+  if (!skipMDCheck) {
+    cy.contains('Machine Deployments').click();
+    cy.contains(new RegExp('Running.*' + clusterName), {timeout: timeout});
+    cy.contains('Machine Sets').click();
+    cy.contains(new RegExp('Active.*' + clusterName), {timeout: timeout});
+  }
 });
 
 // Command to check CAPI cluster Provisioned status
@@ -305,7 +332,10 @@ Cypress.Commands.add('checkCAPIClusterProvisioned', (clusterName, timeout) => {
   } else {
     timeout = 90000
   }
-  cy.contains(new RegExp('Provisioned.*' + clusterName), { timeout: timeout });
+  if (!isAPIv1beta1) {
+    cy.getBySel('sortable-cell-0-3', {timeout: timeout}).should('have.text', 'True');
+  }
+  cy.contains(new RegExp('Provisioned.*' + clusterName), {timeout: timeout});
 });
 
 // Command to check CAPI cluster deletion status
@@ -313,7 +343,7 @@ Cypress.Commands.add('checkCAPIClusterDeleted', (clusterName, timeout) => {
   cy.checkCAPIMenu();
   cy.getBySel('button-group-child-1').click();
   cy.typeInFilter(clusterName);
-  cy.getBySel('sortable-cell-0-1', { timeout: timeout }).should('not.exist');
+  cy.getBySel('sortable-cell-0-1', {timeout: timeout}).should('not.exist');
 });
 
 // Command to check CAPI Menu is visible
@@ -330,29 +360,31 @@ Cypress.Commands.add('checkCAPIMenu', () => {
   cy.contains('.nav', 'Providers')
 });
 
-// Command to check presence of HelmApps under Fleet on local cluster
-Cypress.Commands.add('checkFleetHelmApps', (appList: string[]) => {
+// Command to check presence of HelmOps under Fleet on local cluster
+Cypress.Commands.add('checkFleetHelmOps', (appList: string[]) => {
   cy.burgerMenuOperate('open');
   cy.contains('local').click();
-  const helmPsMenuLocation = isRancherManagerVersion('2.12') ? ['More Resources', 'Fleet', 'Helm Ops'] : ['More Resources', 'Fleet', 'HelmApps'];
-  cy.accesMenuSelection(helmPsMenuLocation);
+  cy.accesMenuSelection(['More Resources', 'Fleet', 'Helm Ops']);
   appList.forEach((app) => {
     cy.typeInFilter(app);
     cy.getBySel('sortable-cell-0-1').should('exist');
   })
 })
+Cypress.Commands.add('navigateToProviders', () => {
+  cy.checkCAPIMenu();
+  cy.contains('Providers').click();
+})
 
 // Command to add CAPI Custom provider
 Cypress.Commands.add('addCustomProvider', (name, namespace, providerName, providerType, version, url) => {
   // Navigate to providers Menu
-  cy.checkCAPIMenu();
-  cy.contains('Providers').click();
+  cy.navigateToProviders();
   cy.clickButton('Create');
   cy.getBySel('select-icon-grid-custom').click();
 
   // Select provider type
   cy.contains('Provider type').click();
-  cy.contains(providerType, { matchCase: false }).click();
+  cy.contains(providerType, {matchCase: false}).click();
 
   cy.getBySel('name-ns-description-namespace').type(namespace + '{enter}');
   cy.typeValue('Name', name);
@@ -371,22 +403,21 @@ Cypress.Commands.add('addCustomProvider', (name, namespace, providerName, provid
 // Command to add CAPI Infrastructure provider
 Cypress.Commands.add('addInfraProvider', (providerType, namespace, cloudCredentials) => {
   // Navigate to providers Menu
-  cy.checkCAPIMenu();
-  cy.contains('Providers').click();
+  cy.navigateToProviders();
   cy.clickButton('Create');
   const selector = "'select-icon-grid-" + providerType + "'"
   cy.getBySel(selector).click();
 
   // Match only with the first word of the provider type to avoid issues with providers like 'Google Cloud Platform' in 2.12
   const firstWordOfProviderType = providerType.includes(' ') ? providerType.split(' ')[0] : providerType;
-  cy.contains('Provider: Create ' + firstWordOfProviderType, { matchCase: false }).should('be.visible');
+  cy.contains('Provider: Create ' + firstWordOfProviderType, {matchCase: false}).should('be.visible');
 
   // TODO: Add variables support after capi-ui-extension/issues/49
   cy.getBySel('name-ns-description-namespace').type(namespace + '{enter}');
 
   if (providerType != 'Docker' && providerType != 'Azure' && cloudCredentials) {
     cy.getBySel('cluster-prov-select-credential').trigger('click');
-    cy.contains(cloudCredentials).click();
+    cy.get('ul').contains(cloudCredentials).click();
   }
   cy.getBySel('capi-provider-create-save').should('be.visible');
   cy.clickButton('Create');
@@ -409,7 +440,7 @@ Cypress.Commands.add('removeCAPIResource', (resourcetype, resourceName, timeout)
   cy.wait(2000); // needed for 2.12
   cy.typeInFilter(resourceName);
   if (timeout != undefined) {
-    cy.getBySel('sortable-cell-0-1', { timeout: timeout }).should('not.exist');
+    cy.getBySel('sortable-cell-0-1', {timeout: timeout}).should('not.exist');
   } else {
     cy.getBySel('sortable-cell-0-1').should('not.exist');
   }
@@ -436,7 +467,7 @@ Cypress.Commands.add('addCloudCredsGCP', (name, gcpCredentials) => {
   cy.clickButton('Create');
   cy.getBySel('subtype-banner-item-gcp').click();
   cy.typeValue('Credential Name', name);
-  cy.getBySel('text-area-auto-grow').type(gcpCredentials, { log: false });
+  cy.getBySel('text-area-auto-grow').type(gcpCredentials, {log: false});
   cy.clickButton('Create');
   cy.contains('API Key').should('be.visible');
   cy.contains(name).should('be.visible');
@@ -473,14 +504,14 @@ Cypress.Commands.add('addCloudCredsVMware', (name: string, vsphere_username: str
   cy.contains(name).should('be.visible');
 });
 
-Cypress.Commands.add('addRepository', (repositoryName: string, repositoryURL: string, repositoryType: string, repositoryBranch: string) => {
+Cypress.Commands.add('addRepository', (repositoryName: string, repositoryURL: string, repositoryType: 'oci' | 'http' | 'git', repositoryBranch: string) => {
   cy.contains('local')
     .click();
   cy.clickNavMenu(['Apps', 'Repositories'])
   // Make sure we are in the 'Repositories' screen (test failed here before)
   // Test fails sporadically here, screen stays in pending state forever
   // Ensuring "Loading..." overlay screen is not present.
-  cy.contains('Loading...', { timeout: 35000 }).should('not.exist');
+  cy.contains('Loading...', {timeout: 35000}).should('not.exist');
   cy.contains('header', 'Repositories')
     .should('be.visible');
   cy.contains('Create')
@@ -490,14 +521,22 @@ Cypress.Commands.add('addRepository', (repositoryName: string, repositoryURL: st
   cy.contains('Repository: Create')
     .should('be.visible');
   cy.typeValue('Name', repositoryName);
-  if (repositoryType === 'git') {
-    cy.contains('Git repository')
-      .click();
-    cy.typeValue('Git Repo URL', repositoryURL);
-    cy.typeValue('Git Branch', repositoryBranch);
-  } else {
-    cy.typeValue('Index URL', repositoryURL);
+  switch (repositoryType) {
+    case "git":
+      cy.contains('Git repository')
+        .click();
+      cy.typeValue('Git Repo URL', repositoryURL);
+      cy.typeValue('Git Branch', repositoryBranch);
+      break;
+    case "oci":
+      cy.contains('OCI Repository').click();
+      cy.typeValue('OCI Repository Host URL', repositoryURL);
+      break;
+    case "http":
+      cy.typeValue('Index URL', repositoryURL);
+      break;
   }
+
   cy.clickButton('Create');
   // Make sure the repo is active before leaving
   // Always press Refresh button as workaround for https://github.com/rancher/rancher/issues/49671
@@ -505,156 +544,225 @@ Cypress.Commands.add('addRepository', (repositoryName: string, repositoryURL: st
   cy.typeInFilter(repositoryName);
   cy.getBySel('sortable-table-0-action-button').click();
   cy.wait(1000);
-  cy.get('.icon.group-icon.icon-refresh').click();
+  // On prime 2.13.0-alpha4 the refresh icon selector didn't change but parent <div> must be clicked
+  cy.get('.icon.group-icon.icon-refresh').parent().click();
   cy.wait(1000);
-  cy.contains(new RegExp('Active.*' + repositoryName), { timeout: 150000 });
+  cy.contains(new RegExp('Active.*' + repositoryName), {timeout: 150000});
 });
+
+function checkApiStatus (retries = 20) {
+  cy.request({
+    url: '/about',
+    failOnStatusCode: false,
+    timeout: 30000,
+  }).then((response) => {
+    if (response.status !== 200 && retries > 0) {
+      cy.wait(5000);
+      checkApiStatus(retries - 1);
+    } else {
+      expect(response.status).to.eq(200);
+      // Once /dashboard/about is back, reload the page
+      cy.wait(5000);
+      cy.reload();
+      cy.wait(2000);
+    }
+  });
+};
 
 // Command to Install, Update or Upgrade App from Charts menu
 // Operation types: Install, Update, Upgrade
 // You can optionally provide an array of questions and answer them before the installation starts
-// Example1: cy.checkChart('Alerting', 'default', [{ menuEntry: '(None)', checkbox: 'Enable Microsoft Teams' }]);
-// Example2: cy.checkChart('Rancher Turtles', 'rancher-turtles-system', [{ menuEntry: 'Rancher Turtles Features Settings', checkbox: 'Seamless integration with Fleet and CAPI'},{ menuEntry: 'Rancher webhook cleanup settings', inputBoxTitle: 'Webhook Cleanup Image', inputBoxValue: 'registry.k8s.io/kubernetes/kubectl:v1.28.0'}]);
-Cypress.Commands.add('checkChart', (operation, chartName, namespace, version, questions, refreshRepo = false) => {
-  cy.get('.nav').contains('Apps').click();
+// Example1: cy.checkChart('local', 'Alerting', 'default', [{ menuEntry: '(None)', checkbox: 'Enable Microsoft Teams' }]);
+// Example2: cy.checkChart('capg-kubeadm', Rancher Turtles', 'cattle-turtles-system', [{ menuEntry: 'Rancher Turtles Features Settings', checkbox: 'Seamless integration with Fleet and CAPI'},{ menuEntry: 'Rancher webhook cleanup settings', inputBoxTitle: 'Webhook Cleanup Image', inputBoxValue: 'registry.k8s.io/kubernetes/kubectl:v1.28.0'}]);
+Cypress.Commands.add('checkChart', (clusterName, operation, chartName, namespace, options = {}) => {
+  const isTurtlesChart = chartName === 'Rancher Turtles';
+  const isTurtlesProvidersChart = chartName === vars.turtlesProvidersChartName;
+  const isUpdateOperation = operation == vars.chartUpdateOperation;
 
-  // Select All Repositries and click Action/Refresh
-  cy.get('.nav').contains('Repositories').click();
-  cy.waitForAllRowsInState('Active');
-  cy.wait(500);
-  if (refreshRepo && refreshRepo == true) {
-    cy.get('div.checkbox-outer-container.check').click();
-    cy.wait(500);
-    cy.contains('Refresh').click();
+  const getChartSelector = () => {
+    if (isTurtlesChart) {
+      if (isRancherManagerVersion('>=2.13')) {
+        return isTurtlesDevChart ? '"item-card-cluster/chartmuseum-repo/rancher-turtles"' : '"item-card-cluster/rancher-charts/rancher-turtles"';
+      }
+
+      if (isRancherManagerVersion('2.12')) {
+        return isTurtlesDevChart && !isMigration ? '"item-card-cluster/chartmuseum-repo/rancher-turtles"' : '"item-card-cluster/turtles-chart/rancher-turtles"';
+      }
+
+      return '"select-icon-grid-Rancher Turtles - the Cluster API Extension"';
+    }
+
+    // for >=2.13 we use an external repo to install providers chart, and for 2.12 there is no need to install it.
+    if (isTurtlesProvidersChart && isRancherManagerVersion('>=2.13')) {
+      return vars.turtlesProvidersChartSelector;
+    }
+
+    return 'app-chart-cards-container';
+  };
+
+  const performOperation = () => {
+    cy.clickNavMenu(['Apps', 'Repositories']);
+    // Select All Repositories and click Action/Refresh
     cy.waitForAllRowsInState('Active');
-    cy.wait(1000);
-  }
+    cy.wait(500);
 
-  cy.get('.nav').contains('Charts').click();
-
-  if (isRancherManagerVersion('2.12')) {
-    cy.getBySel('charts-header-title').should('be.visible');
-  } else {
-    cy.contains('Featured Charts').should('be.visible'); // TODO check if this cannot be unified with 2.12
-  }
-
-  // Chart filter input is not normal filter in 2.12 :(
-  if (isRancherManagerVersion('2.12')) {
-    cy.getBySel('charts-filter-input').clear().type(chartName);
-  } else {
-    cy.typeInFilter(chartName);
-  }
-  const chartSelector = isRancherManagerVersion('2.12') ? 'app-chart-cards-container' : 'chart-selection-grid';
-  cy.getBySel(chartSelector).within(() => {
-    cy.contains(chartName, { timeout: 10000 }).then($el => {
+    if (options.refreshRepo) {
+      cy.get('div.checkbox-outer-container.check').click();
       cy.wait(500);
-      cy.wrap($el).should('be.visible').click();
-    });
-  })
-  cy.contains('Charts: ' + chartName);
-
-  if (version && version != "") {
-    cy.contains(version).click();
-    cy.url().should("contain", version)
-  }
-
-  if (chartName == 'Rancher Turtles' && operation == 'Update') {
-    cy.get('body').invoke('text').then((bodyText) => {
-      if (bodyText.includes('Current')) {
-        cy.contains('Current').click();
-      }
-    });
-  }
-
-  cy.getBySel('btn-chart-install').click();
-  cy.contains(operation + ': Step 1')
-  cy.clickButton('Next');
-
-  // Used for entering questions and answering them
-  if (questions) {
-    // Some apps like Alerting show questions page directly so no further action needed here
-    // Some other apps like Turtles have a 'Customize install settings' checkbox or its variant which needs to be clicked
-    if (chartName == 'Rancher Turtles' && operation == "Update") {
-      cy.contains('Customize install settings').should('be.visible').click();
+      cy.contains('Refresh').click();
+      cy.waitForAllRowsInState('Active');
+      cy.wait(1000);
     }
 
-    questions.forEach((question) => {
-      if (question.checkbox) {
-        cy.contains('a', question.menuEntry).click();
-        cy.contains(question.checkbox).click(); // TODO make sure the checkbox is enabled
-      } else if (question.inputBoxTitle && question.inputBoxValue) {
-        cy.contains(question.menuEntry).click();
-        cy.contains(question.inputBoxTitle).siblings('input').clear().type(question.inputBoxValue);
-      }
+    cy.clickNavMenu(['Apps', 'Charts']);
+    cy.getBySel('charts-header-title').should('be.visible');
+    cy.typeInFilter(chartName, 'input[data-testid="charts-filter-input"]');
+
+    cy.getBySel(getChartSelector()).within(() => {
+      cy.contains(chartName, {timeout: 10000}).then($el => {
+        cy.wait(500);
+        cy.wrap($el).should('be.visible').click();
+      });
     });
-  }
+    cy.contains(`Charts: ${chartName}`);
 
-  cy.clickButton(operation);
-
-  // If 'namespaces <namespace> not found' error or `Error` button is visible,
-  // wait for `Error` button to disappear and click on the `Install` button again
-  cy.get('.main-layout').then((mainLayout) => {
-    if (mainLayout.find('div.banner.error.footer-error').length) {
-      // Wait for the `Error` button to disappear; it changes to `Install` after a few seconds
-      cy.get('button.btn.bg-error', {timeout: 10000}).should('not.exist');
-      cy.clickButton(operation);
-    }
-  })
-
-  // This is 1s more than the time required for the installation tabpanel to appear;
-  // or in case of Turtles, Rancher pod restarts, so this is enough time to start restarting Rancher
-  cy.wait(10000);
-
-  if (chartName == 'Rancher Turtles') {
-    // Poll /dashboard/about until it returns HTTP 200 and then reload the page
-    const checkApiStatus = (retries = 20) => {
-      cy.request({
-        url: '/about',
-        failOnStatusCode: false,
-        timeout: 30000,
-      }).then((response) => {
-        if (response.status !== 200 && retries > 0) {
-          cy.wait(5000);
-          checkApiStatus(retries - 1);
-        } else {
-          expect(response.status).to.eq(200);
-          // Once /dashboard/about is back, reload the page
-          cy.wait(5000);
-          cy.reload();
-          cy.wait(2000);
+    if (options.version) {
+      cy.get('body').invoke('text').then((bodyText) => {
+        if (bodyText.includes('Show More')) {
+          cy.contains('Show More').click();
         }
       });
-    };
-    checkApiStatus();
-  } else {
-    cy.getBySel("windowmanager").then((windowmanager) => {
-      // Check if the installation panel has appeared;
-      if (windowmanager.find('div[role=tabpanel]').length) {
+      cy.contains(options.version).click();
+      cy.url().should("contain", options.version);
+    }
+
+    if (isTurtlesChart && isUpdateOperation) {
+      cy.get('body').invoke('text').then((bodyText) => {
+        if (bodyText.includes('Current')) {
+          cy.contains('Current').click();
+        }
+      });
+    }
+
+    cy.getBySel('btn-chart-install').click();
+    cy.contains(operation + ': Step 1');
+
+    // TODO: This is a temp workaround until https://github.com/rancher/rancher/issues/53883 is fixed
+    if (chartName == "rancher-turtles-providers") {
+      cy.setNamespace('All Namespaces', 'all_user');
+      cy.getBySel('name-ns-description-namespace').type(namespace + '{enter}');
+    }
+    cy.clickButton('Next');
+
+    // Used for entering questions and answering them
+    if (options.questions) {
+      // Some apps like Alerting show questions page directly so no further action needed here
+      // Some other apps like Turtles have a 'Customize install settings' checkbox or its variant which needs to be clicked
+      if (isTurtlesChart && isUpdateOperation) {
+        cy.contains('Customize install settings').should('be.visible').click();
+      }
+
+      options.questions.forEach((question) => {
+        if (question.checkbox) {
+          cy.contains('a', question.menuEntry).click();
+          cy.contains(question.checkbox).click();
+        } else if (question.inputBoxTitle && question.inputBoxValue) {
+          cy.contains(question.menuEntry).click();
+          cy.contains(question.inputBoxTitle).siblings('input').clear().type(question.inputBoxValue);
+        }
+      });
+    }
+
+    if (options.modifyYAMLOperation) {
+      cy.get('.CodeMirror').then((editor) => {
+        // @ts-expect-error known error with CodeMirror
+        let text = yaml.load(editor[0].CodeMirror.getValue());
+        // @ts-ignore
+        options.modifyYAMLOperation(text);
+        // @ts-expect-error known error with CodeMirror
+        editor[0].CodeMirror.setValue(yaml.dump(text));
+      });
+    }
+
+    const buttonText = isRancherManagerVersion('>=2.13') && (isUpdateOperation) ? 'Save changes' : operation;
+    cy.clickButton(buttonText);
+
+    // If 'namespaces <namespace> not found' error or `Error` button is visible,
+    // wait for `Error` button to disappear and click on the `Install` button again
+    cy.get('.main-layout').then((mainLayout) => {
+      if (mainLayout.find('div.banner.error.footer-error').length) {
+        // Wait for the `Error` button to disappear; it changes to `Install` after a few seconds
+        cy.get('button.btn.bg-error', {timeout: 10000}).should('not.exist');
+        // Adding hard wait to allow Install button to become clickable
+        cy.wait(2000);
+        cy.clickButton(operation);
+      }
+    });
+
+    // This is 1s more than the time required for the installation tabpanel to appear;
+    // or in case of Turtles, Rancher pod restarts, so this is enough time to start restarting Rancher
+    cy.wait(10000);
+
+    if (isTurtlesChart) {
+      // Poll /dashboard/about until it returns HTTP 200 and then reload the page
+      checkApiStatus();
+    } else {
+      if (isTurtlesProvidersChart) {
+        cy.contains(new RegExp('SUCCESS: helm .*tgz'), {timeout: 140000}).should('be.visible');
+      } else {
         // Wait for both CRD and main helm chart to be installed
         cy.contains(new RegExp('SUCCESS: helm .*crd.*tgz.*SUCCESS: helm .*tgz'), {timeout: 140000}).should('be.visible');
-        cy.get('.closer').click();
-      } else {
-        // If the installation panel failed to appear for some reason, manually check for app installation
-        // Installed Apps should have loaded by now, set the namespace and check if the app name is available in the list;
-        cy.contains('Installed Apps').should('be.visible');
-        cy.setNamespace(namespace)
-        cy.typeInFilter(chartName, 'input[aria-label="Filter table results"]');
-        cy.getBySel('sortable-cell-0-1').should('exist');
       }
-    })
-  }
+      cy.get('.closer').click();
+    }
 
-  if (operation == 'Install') {
-    // All resources (usually an App and its CRD) in the namespaces are deployed (green badge)
     cy.contains('Installed Apps').should('be.visible');
     cy.setNamespace(namespace);
-    cy.waitForAllRowsInState('Deployed', 180000);
+
+    if (operation == 'Install') {
+      // All resources (usually an App and its CRD) in the namespaces are deployed (green badge)
+      cy.waitForAllRowsInState('Deployed', 180000);
+    } else {
+      cy.contains(new RegExp('Installed App:.*Deployed'), {timeout: 120000}).should('be.visible');
+      if (!isTurtlesProvidersChart) {
+        cy.waitForAllRowsInState('Active');
+      }
+    }
+
     cy.namespaceReset();
+  };
+
+  // Click on the cluster
+  cy.get('.side-menu .clusters').within(() => {
+    cy.contains(clusterName).click();
+  });
+
+  if (operation === 'Install' && Cypress.currentRetry > 0) {
+    cy.clickNavMenu(['Apps', 'Installed Apps']);
+    cy.contains('Installed Apps', {timeout: 10000}).should('be.visible');
+
+    // check if the desired namespace is available, if it is, the app was installed successfully in previous try
+    cy.getBySel('namespaces-dropdown').click();
+    cy.get('div.ns-dropdown-menu').then((dropdownMenu) => {
+      const namespaceFound = dropdownMenu.find(`div[id='ns_${namespace}']`).length > 0
+
+      // close the dropdown
+      cy.getBySel('namespaces-dropdown').click();
+
+      // if the namespace is found, chances are the app was installed successfully in previous try
+      if (namespaceFound) {
+        cy.setNamespace(namespace);
+        cy.typeInFilter(chartName, 'input[aria-label="Filter table results"]');
+        cy.waitForAllRowsInState('Deployed');
+        cy.task('suiteLog', `Chart ${chartName} is already installed and deployed. Skipping installation.`);
+        cy.namespaceReset()
+      } else {
+        // perform installation again if the namespace is not found, i.e. the chart was not installed in previous try
+        performOperation()
+      }
+    });
   } else {
-    cy.setNamespace(namespace);
-    cy.contains(new RegExp('Installed App:.*Deployed'), { timeout: 120000 }).should('be.visible');
-    cy.waitForAllRowsInState('Active');
-    cy.namespaceReset();
+    performOperation();
   }
 });
 
@@ -669,7 +777,8 @@ Cypress.Commands.add('patchYamlResource', (clusterName, namespace, resourceKind,
   // Open Resource Search modal
   cy.get('.icon-search.icon-lg').click();
   cy.get('input.search').type(resourceKind);
-  cy.contains('a', resourceKind, { matchCase: false }).click();
+  cy.contains('a', resourceKind, {matchCase: false}).click();
+  cy.wait(2000);
   cy.typeInFilter(resourceName);
   // Click three dots menu on filtered resource (must be unique)
   cy.getBySel('sortable-table-0-action-button').click();
@@ -730,11 +839,13 @@ Cypress.Commands.add('searchCluster', (clusterName) => {
 // Command to remove cluster from Rancher
 Cypress.Commands.add('deleteCluster', (clusterName, timeout = 120000) => {
   cy.searchCluster(clusterName);
+  // If no cluster is found, tr.no-results will be present; ensure that this does not happen
+  cy.get("table.sortable-table tbody tr").should('not.have.class', 'no-results');
   cy.viewport(1920, 1080);
   cy.getBySel('sortable-table_check_select_all').click();
-  cy.getBySel('sortable-table-promptRemove').click({ctrlKey: true}); // this will prevent to display confirmation dialog
+  cy.getBySel('sortable-table-promptRemove').click({ctrlKey: true});
   cy.wait(2000); // needed for 2.12
-  cy.contains(clusterName, { timeout: timeout }).should('not.exist');
+  cy.contains(clusterName, {timeout: timeout}).should('not.exist');
 });
 
 // Command to type in Filter input
@@ -754,17 +865,14 @@ Cypress.Commands.add('goToHome', () => {
 
 // Fleet commands
 // Command add Fleet Git Repository
-Cypress.Commands.add('addFleetGitRepo', (repoName, repoUrl, branch, paths, targetNamespace, workspace) => {
-  function selectWorkspace(workspace?: string) {
+Cypress.Commands.add('addFleetGitRepo', (repoName, repoUrl, branch, paths, targetNamespace, workspace = 'fleet-local') => {
+  function selectWorkspace(workspace: string) {
     // Select workspace
     cy.getBySel('workspace-switcher').click();
-    if (!workspace) {
-      workspace = 'fleet-local';
-    }
     cy.contains(workspace).should('be.visible').click();
   }
 
-  if (isRancherManagerVersion('2.12')) {
+  if (isRancherManagerVersion('>=2.12')) {
     cy.accesMenuSelection(['Continuous Delivery', 'App Bundles']);
     // replacement for cy.getBySel('masthead-create').should('be.visible');
     cy.contains('Create App Bundle').should('be.visible');
@@ -804,56 +912,64 @@ Cypress.Commands.add('addFleetGitRepo', (repoName, repoUrl, branch, paths, targe
   cy.clickButton('Create'); // TODO Check there is no error after clicking
 
   // Navigate to fleet repo
-  cy.checkFleetGitRepo(repoName, workspace); // Wait until the repo details are loaded
+  cy.checkFleetGitRepoActive(repoName, workspace); // Wait until the repo details are loaded
 })
 
 // Command remove Fleet Git Repository
-Cypress.Commands.add('removeFleetGitRepo', (repoName, workspace) => {
-  cy.checkFleetGitRepo(repoName, workspace);
+Cypress.Commands.add('removeFleetGitRepo', (repoName, workspace = 'fleet-local') => {
+  cy.checkFleetGitRepoActive(repoName, workspace);
   // Click on the actions menu and select 'Delete' from the menu
-  if (isRancherManagerVersion('2.12')) {
+  if (isRancherManagerVersion('>=2.12')) {
     cy.getBySel('masthead-action-menu').should('be.visible').click();
   } else {
     cy.get('.actions .btn.actions').click();
   }
   cy.get('.icon.group-icon.icon-trash').click({ctrlKey: true}); // this will prevent to display confirmation dialog
   cy.wait(2000); // needed for 2.12
-  cy.getBySel('sortable-table-list-container').should('be.visible');
-  cy.contains('td', repoName, { timeout: 120000 }).should('not.exist');
+  cy.goToFleetGitRepos(workspace);
+  // Check the git repo
+  cy.contains(repoName).should('not.exist');
 })
 
 // Command forcefully update Fleet Git Repository
 Cypress.Commands.add('forceUpdateFleetGitRepo', (repoName, workspace) => {
-  cy.checkFleetGitRepo(repoName, workspace);
+  cy.checkFleetGitRepoActive(repoName, workspace);
   // Click on the actions menu and select 'Force Update' from the menu
-  if (isRancherManagerVersion('2.12')) {
+  if (isRancherManagerVersion('>=2.12')) {
     cy.getBySel('masthead-action-menu').should('be.visible').click();
   } else {
     cy.get('.actions .btn.actions').click();
   }
-  cy.get('.icon.group-icon.icon-refresh').click();
+  // On prime 2.13.0-alpha4 the refresh icon selector didn't change but parent <div> must be clicked
+  cy.get('.icon.group-icon.icon-refresh').parent().click();
   cy.clickButton('Update')
 })
 
-// Command to check Fleet Git Repository
-Cypress.Commands.add('checkFleetGitRepo', (repoName, workspace) => {
+// Command to navigate to Fleet gitrepo page
+Cypress.Commands.add('goToFleetGitRepos', (workspace = 'fleet-local') => {
   // Go to 'Continuous Delivery' > 'Git Repos'
   cy.burgerMenuOperate('open');
-  const gitRepoMenuLocation = isRancherManagerVersion('2.12') ? ['Continuous Delivery', 'Resources', 'Git Repos'] : ['Continuous Delivery', 'Git Repos'];
+  const gitRepoMenuLocation = isRancherManagerVersion('>=2.12') ? ['Continuous Delivery', 'Resources', 'Git Repos'] : ['Continuous Delivery', 'Git Repos'];
   cy.accesMenuSelection(gitRepoMenuLocation);
   cy.getBySel('masthead-create').should('be.visible');
   // Change the workspace using the dropdown on the top bar
   cy.getBySel('workspace-switcher').click();
-  if (!workspace) {
-    workspace = 'fleet-local';
-  }
   cy.contains(workspace).click();
+})
+
+// Command to check Fleet Git Repository is Active
+Cypress.Commands.add('checkFleetGitRepoActive', (repoName, workspace) => {
+  cy.goToFleetGitRepos(workspace);
   // Click the repo link
   cy.contains(repoName).click();
   cy.url().should("include", "fleet/fleet.cattle.io.gitrepo/" + workspace + "/" + repoName)
   // Ensure there are no errors after waiting for a few seconds
   cy.wait(5000);
-  cy.get('.badge-state').should("not.contain", "Err Applied");
+  if (isRancherManagerVersion('>=2.12')) {
+    cy.get('.badge-state', {timeout: 3000}).should("not.contain", "Error");
+  } else {
+    cy.get('.badge-state', {timeout: 3000}).should("not.contain", "Err Applied");
+  }
 })
 
 // Fleet namespace toggle
@@ -870,8 +986,8 @@ Cypress.Commands.add('verifyTableRow', (rowNumber, expectedText1, expectedText2)
   // Could not find a better way to wait, but can be improved
   cy.wait(1000)
   // Ensure table is loaded and visible
-  cy.contains('tr.main-row[data-testid="sortable-table-0-row"]').should('not.be.empty', { timeout: 25000 });
-  cy.get(`table > tbody > tr.main-row[data-testid="sortable-table-${rowNumber}-row"]`, { timeout: 60000 }).should(($row) => {
+  cy.contains('tr.main-row[data-testid="sortable-table-0-row"]').should('not.be.empty', {timeout: 25000});
+  cy.get(`table > tbody > tr.main-row[data-testid="sortable-table-${rowNumber}-row"]`, {timeout: 60000}).should(($row) => {
     // Replace whitespaces by a space and trim the string for both expected texts
     const text = $row.text().replace(/\s+/g, ' ').trim();
 
@@ -898,7 +1014,7 @@ Cypress.Commands.add('verifyTableRow', (rowNumber, expectedText1, expectedText2)
 
 // Wait until all the rows in the table on current page are in the same State
 Cypress.Commands.add('waitForAllRowsInState', (desiredState, timeout = 120000) => {
-  cy.get('table > tbody > tr.main-row', { timeout }).should(($rows) => {
+  cy.get('table > tbody > tr.main-row', {timeout}).should(($rows) => {
     // Make sure there is at least one row
     expect($rows.length).to.be.greaterThan(0);
     const allInDesiredState = $rows.toArray().every((row) => {
@@ -932,7 +1048,11 @@ Cypress.Commands.add('deleteKubernetesResource', (clusterName = 'local', resourc
     cy.setNamespace(namespace);
   }
 
-  cy.accesMenuSelection(resourcePath);
+  // using `cy.clickNavMenu()` does not always work here, so we explicitly wait after clicking a label.
+  resourcePath.forEach(label => {
+    cy.get('nav').contains(label).click()
+    cy.wait(1000);
+  });
 
   cy.typeInFilter(resourceName);
   cy.getBySel('sortable-cell-0-1').should('exist');
@@ -941,7 +1061,8 @@ Cypress.Commands.add('deleteKubernetesResource', (clusterName = 'local', resourc
   cy.getBySel('sortable-table-promptRemove').click({ctrlKey: true}); // this will prevent to display confirmation dialog
   cy.wait(2000); // needed for 2.12
   cy.typeInFilter(resourceName);
-  cy.getBySel('sortable-cell-0-1').should('not.exist');
+  cy.getBySel('sortable-cell-0-1', {timeout: 60000}).should('not.exist');
+  cy.namespaceReset();
 })
 
 Cypress.Commands.add('exploreCluster', (clusterName: string) => {
@@ -977,16 +1098,16 @@ Cypress.Commands.add('createAWSClusterStaticIdentity', (accessKey, secretKey) =>
 Cypress.Commands.add('createCAPIProvider', (providerName) => {
   cy.goToHome();
   cy.burgerMenuOperate('open');
-  cy.readFile('./fixtures/' + providerName + '/capi-' + providerName + '-provider.yaml').then((data) => {
+  cy.readFile('./fixtures/' + providerName + '/' + providerName + '-capiprovider.yaml').then((data) => {
     cy.importYAML(data)
   });
+  cy.checkCAPIProvider(providerName);
 });
 
 // Check CAPIProvider ready status
 Cypress.Commands.add('checkCAPIProvider', (providerName) => {
   // Navigate to providers Menu
-  cy.checkCAPIMenu();
-  cy.contains('Providers').click();
+  cy.navigateToProviders();
   cy.typeInFilter(providerName);
   cy.waitForAllRowsInState('Ready');
 });
@@ -1036,19 +1157,106 @@ Cypress.Commands.add('verifyResourceCount', (clusterName, resourcePath, resource
     cy.setNamespace(namespace);
   }
   cy.typeInFilter(resourceName);
-  cy.get('table > tbody > tr.main-row', { timeout }).should(($rows) => {
+  cy.get('table > tbody > tr.main-row', {timeout}).should(($rows) => {
     expect($rows.length).to.be.equal(expectedCount);
   });
 });
 
-// Command to verify CAPIProvider image registry
-Cypress.Commands.add('verifyCAPIProviderImage', (providerName, providerNamespace) => {
-  let providerImageRegistry: string;
-  if (providerName == 'docker') {
-    providerImageRegistry = 'gcr.io/k8s-staging-cluster-api'
-  } else {
-    providerImageRegistry = 'registry.suse.com/rancher'
+// Container image registry URLs used by CAPI providers
+const PROVIDER_REGISTRIES = {
+  K8S_STAGING: 'gcr.io/k8s-staging-cluster-api',
+  SUSE_STG: 'stgregistry.suse.com/rancher',
+  RANCHER_PRIME: 'registry.rancher.com/rancher',
+  RANCHER_GHCR: 'ghcr.io/rancher',
+  RANCHER_CAPI: 'rancher/cluster-api-controller',
+  K8S_PROD: 'registry.k8s.io/cluster-api',
+  SUSE_PROD: 'registry.suse.com/rancher',
+} as const;
+
+/**
+ * Get provider image registry for Rancher 2.13+
+ */
+function getV213PlusRegistry(providerNamespace: string): string {
+  const isPrimeDev = isTurtlesDevChart && isTurtlesPrimeBuild();
+  const usesStgRegistry = isPrePrimeChannel() || (isRancherManagerVersion('2.13') && isHeadBuild);
+
+  // Special handling for 2.13 prerelease community builds
+  if (isRancherManagerVersion('2.13') && isPreRelease && !isPrimeChannel()) {
+    return isPrimeDev ? PROVIDER_REGISTRIES.RANCHER_PRIME : getCommunityRegistry(providerNamespace);
   }
+
+  // Staging registry takes precedence for:
+  // - Prime prerelease channels (prime-alpha, prime-rc)
+  // - 2.13 head builds (2.13 alpha/rc community builds already handled above)
+  if (usesStgRegistry) {
+    return PROVIDER_REGISTRIES.SUSE_STG;
+  }
+
+  // Prime builds (dev or channel) use production registry
+  if (isPrimeDev || isPrimeChannel()) {
+    return PROVIDER_REGISTRIES.RANCHER_PRIME;
+  }
+
+  // Community builds: registry depends on provider namespace
+  return getCommunityRegistry(providerNamespace);
+}
+
+/**
+ * Get provider image registry for community builds
+ */
+function getCommunityRegistry(providerNamespace: string): string {
+  if (providerNamespace.includes('rke2') || providerNamespace.includes('fleet')) {
+    return PROVIDER_REGISTRIES.RANCHER_GHCR;
+  }
+
+  if (providerNamespace.includes(capiNamespace)) {
+    return PROVIDER_REGISTRIES.RANCHER_CAPI;
+  }
+
+  return PROVIDER_REGISTRIES.K8S_PROD;
+}
+
+/**
+ * Get provider image registry for Rancher 2.12
+ */
+function getV212Registry(providerNamespace: string): string {
+  if (providerNamespace.includes('kubeadm')) {
+    return PROVIDER_REGISTRIES.K8S_PROD;
+  }
+  return PROVIDER_REGISTRIES.SUSE_PROD;
+}
+
+/**
+ * Determines the correct container image registry for a CAPI provider.
+ *
+ * Registry selection depends on:
+ * - Rancher version (2.12 vs 2.13+)
+ * - Build type (Prime vs Community, Dev vs Prod)
+ * - Registry environment (Staging vs Production)
+ * - Provider namespace (determines upstream registry for community builds)
+ *
+ * @param providerNamespace - The Kubernetes namespace where the provider is deployed
+ * @returns The expected container registry URL
+ */
+function determineProviderImageRegistry(providerNamespace: string): string {
+  // Special case: CAPD always uses k8s staging registry
+  if (providerNamespace === 'capd-system') {
+    return PROVIDER_REGISTRIES.K8S_STAGING;
+  }
+
+  if (isRancherManagerVersion('>=2.13')) {
+    return getV213PlusRegistry(providerNamespace);
+  }
+
+  return getV212Registry(providerNamespace);
+}
+
+/**
+ * Verifies that the CAPI provider deployment uses the correct container image registry.
+ * Navigates to the provider's namespace and checks that the expected registry is visible.
+ */
+Cypress.Commands.add('verifyCAPIProviderImage', (providerNamespace) => {
+  const providerImageRegistry = determineProviderImageRegistry(providerNamespace);
 
   cy.exploreCluster('local');
   cy.accesMenuSelection(['Workloads', 'Deployments']);
@@ -1056,3 +1264,56 @@ Cypress.Commands.add('verifyCAPIProviderImage', (providerName, providerNamespace
   cy.contains(providerImageRegistry).should('be.visible');
   cy.namespaceReset();
 });
+
+Cypress.Commands.add('setCAPIFeature', (featureName, featureValue) => {
+  cy.readFile('./fixtures/feature.yaml').then((data) => {
+    data = data.replace(/replace_feature_name/g, featureName)
+    data = data.replace(/replace_feature_value/g, featureValue)
+    cy.importYAML(data);
+  });
+
+  // Poll /dashboard/about until it returns HTTP 200 and then reload the page
+  cy.wait(5000);
+  checkApiStatus();
+
+  cy.burgerMenuOperate('open');
+  cy.accesMenuSelection(['Global Settings', 'Feature Flags']);
+  cy.typeInFilter(featureName);
+  if (featureValue == 'true') {
+    cy.contains(new RegExp('Active.*' + featureName));
+  } else {
+    cy.contains(new RegExp('Disabled.*' + featureName));
+  }
+});
+
+export function matchAndWaitForProviderReadyStatus(
+  providerString: string,
+  providerType: string,
+  providerName: string,
+  providerVersion: string,
+  providerNamespace: string,
+  timeout: number = vars.shortTimeout,
+) {
+  const readyState = 'Ready'; // Default state
+  cy.reload();
+  cy.get('tr.main-row', {timeout: timeout})
+    .contains('a', providerString)
+    .closest('tr')
+    .within(() => {
+      cy.get('td').eq(1).should('contain.text', readyState);    // State
+      cy.get('td').eq(2).should('contain.text', providerString);  // Name
+      cy.get('td').eq(3).should('contain.text', providerType);    // Type
+      cy.get('td').eq(4).should('contain.text', providerName);    // ProviderName
+      // Only check provider version for Rancher >=2.13 and -
+      // 1. pre-prime & prime rancher
+      // 2. for turtles build with dev=true & target_build_type=prime
+      if (isRancherManagerVersion('>=2.13') && (isPrimeChannel() || (isTurtlesDevChart && isTurtlesPrimeBuild()))) {
+        cy.get('td').eq(5).should('contain.text', providerVersion); // InstalledVersion
+      } else {
+        cy.task('log', 'This is not a prime Rancher; skipping provider version check');
+      }
+      cy.get('td').eq(6).should('contain.text', readyState);      // Phase
+    });
+    // Verify provider image
+    cy.verifyCAPIProviderImage(providerNamespace);
+}

@@ -12,36 +12,43 @@ limitations under the License.
 */
 
 import '~/support/commands';
-import {qase} from 'cypress-qase-reporter/mocha';
-import {isRancherManagerVersion} from '~/support/utils';
+import {
+  capiNamespace,
+  isCypressTag,
+  isRancherManagerVersion,
+  isTurtlesDevChart,
+  isUpgrade,
+  providersChartNeedsStgRegistry,
+  turtlesNamespace,
+} from '~/support/utils';
+import {vars} from '~/support/variables';
+import {matchAndWaitForProviderReadyStatus} from "~/support/commands";
 
-function matchAndWaitForProviderReadyStatus(
-  providerString: string,
-  providerType: string,
-  providerName: string,
-  providerVersion: string,
-  timeout: number = 60000,
-) {
-  const readyState = 'Ready'; // Default state
-  cy.get('tr.main-row', { timeout: timeout })
-    .contains('a', providerString)
-    .closest('tr')
-    .within(() => {
-      //cy.get('td').eq(1).should('contain.text', readyState);    // State - unreliable in 2.12 - often Unavailable, using Phase instead
-      cy.get('td').eq(2).should('contain.text', providerString);  // Name
-      cy.get('td').eq(3).should('contain.text', providerType);    // Type
-      cy.get('td').eq(4).should('contain.text', providerName);    // ProviderName
-      cy.get('td').eq(5).should('contain.text', providerVersion); // InstalledVersion
-      cy.get('td').eq(6).should('contain.text', readyState);      // Phase
-    });
+type BuildType = 'prod-v2.13' | 'prod-v2.14' | 'dev-v2.13' | 'dev-v2.14';
+const buildType = determineBuildType();
+
+function determineBuildType(): BuildType {
+  if (isTurtlesDevChart && isRancherManagerVersion('2.13')) {
+    return 'dev-v2.13';
+  }
+  if (isTurtlesDevChart && isRancherManagerVersion('2.14')) {
+    return 'dev-v2.14';
+  }
+  if (isRancherManagerVersion('2.13')) {
+    return 'prod-v2.13';
+  }
+  if (isRancherManagerVersion('2.14')) {
+    return 'prod-v2.14';
+  }
+  return undefined as unknown as BuildType; // This should never happen, but it satisfies the type checker
 }
 
+if (isRancherManagerVersion('>2.12')) {
 Cypress.config();
 describe('Enable CAPI Providers', () => {
-  const branch = isRancherManagerVersion('2.12') ? 'main' : 'release-0.23';
-  const turtlesRepoUrl = 'https://github.com/rancher/turtles.git';
-
   // Providers names
+  const coreCAPIProvider = 'cluster-api'
+  const rke2Provider = 'rke2'
   const kubeadmProvider = 'kubeadm'
   const dockerProvider = 'docker'
   const amazonProvider = 'aws'
@@ -52,28 +59,51 @@ describe('Enable CAPI Providers', () => {
 
   // Expected provider versions
   const providerVersions = {
-    prod: {
-      kubeadm: 'v1.10.5',
-      fleet: 'v0.11.0',
+    'prod-v2.13': {
+      capi: 'v1.10.6',
+      rke2: 'v0.21.1',
+      kubeadm: 'v1.10.6',
+      fleet: 'v0.12.0',
       vsphere: 'v1.13.1',
       amazon: 'v2.9.1',
       google: 'v1.10.0',
       azure: 'v1.21.0'
     },
-    dev: {
-      kubeadm: 'v1.10.5',
-      fleet: 'v0.11.0',
+    'prod-v2.14': {
+      capi: 'v1.12.2',
+      rke2: 'v0.24.1',
+      kubeadm: 'v1.12.2',
+      fleet: 'v0.14.1',
+      vsphere: 'v1.15.2',
+      amazon: 'v2.10.1',
+      google: 'v1.11.1',
+      azure: 'v1.22.0'
+    },
+    'dev-v2.13': {
+      capi: 'v1.10.6',
+      rke2: 'v0.21.1',
+      kubeadm: 'v1.10.6',
+      fleet: 'v0.12.0',
       vsphere: 'v1.13.1',
       amazon: 'v2.9.1',
       google: 'v1.10.0',
       azure: 'v1.21.0'
+    },
+    'dev-v2.14': {
+      capi: 'v1.12.2',
+      rke2: 'v0.24.1',
+      kubeadm: 'v1.12.2',
+      fleet: 'v0.14.1',
+      vsphere: 'v1.15.2',
+      amazon: 'v2.10.1',
+      google: 'v1.11.1',
+      azure: 'v1.22.0'
     }
   }
 
-  // Set the provider versions based on the environment
-  const buildType = Cypress.env('chartmuseum_repo') ? 'dev' : 'prod';
-
-  // Assign the provider versions based on the build type
+  // Assign the provider versions based on the chart type
+  const coreCAPIProviderVersion = providerVersions[buildType].capi;
+  const rke2ProviderVersion = providerVersions[buildType].rke2;
   const kubeadmProviderVersion = providerVersions[buildType].kubeadm
   const fleetProviderVersion = providerVersions[buildType].fleet
   const vsphereProviderVersion = providerVersions[buildType].vsphere
@@ -81,70 +111,120 @@ describe('Enable CAPI Providers', () => {
   const googleProviderVersion = providerVersions[buildType].google
   const azureProviderVersion = providerVersions[buildType].azure
 
-  const kubeadmBaseURL = 'https://github.com/kubernetes-sigs/cluster-api/releases/'
-  const kubeadmProviderTypes = ['bootstrap', 'control plane']
-  const capiNamespaces = ['capi-clusters', 'capi-classes']
-  const localProviderNamespaces = ['capi-kubeadm-bootstrap-system', 'capi-kubeadm-control-plane-system', 'capd-system']
-  const cloudProviderNamespaces = ['capa-system', 'capg-system', 'capz-system']
-  const vsphereProviderNamespace = 'capv-system'
+  const providerTypes = ['bootstrap', 'control plane']
+  const kubeadmProviderNamespaces = ['capi-kubeadm-bootstrap-system', 'capi-kubeadm-control-plane-system']
 
   beforeEach(() => {
     cy.login();
     cy.burgerMenuOperate('open');
   });
 
-  context('Local providers - @install', { tags: '@install' }, () => {
-    capiNamespaces.forEach(namespace => {
-      it('Create CAPI Namespaces - ' + namespace, () => {
-        cy.createNamespace(namespace);
-      })
+  context('Local providers - @install', {tags: '@install'}, () => {
+    // HelmOps to be used across all specs
+    it('Add Applications fleet repo', () => {
+      // Add upstream apps repo
+      cy.addFleetGitRepo('helm-ops', vars.turtlesRepoUrl, vars.classBranch, 'examples/applications/', vars.capiClustersNS);
     })
 
-    localProviderNamespaces.forEach(namespace => {
-      it('Create CAPI Providers Namespaces - ' + namespace, () => {
-        cy.createNamespace(namespace);
-      })
+    it('Create Providers using Charts', () => {
+      const providerSelectionFunction = (text: any) => {
+        // @ts-ignore
+        text.providers.bootstrapKubeadm.enabled = true;
+        // @ts-ignore
+        text.providers.bootstrapKubeadm.enableAutomaticUpdate = true;
+
+        // @ts-ignore
+        text.providers.controlplaneKubeadm.enabled = true;
+        // @ts-ignore
+        text.providers.controlplaneKubeadm.enableAutomaticUpdate = true;
+
+        if (isCypressTag('@short') || isCypressTag('@upgrade')) {
+            // @ts-ignore
+            text.providers.infrastructureDocker.enabled = true;
+            // @ts-ignore
+            text.providers.infrastructureDocker.enableAutomaticUpdate = true;
+          }
+        if (isCypressTag('@full')) {
+            // @ts-ignore
+            text.providers.infrastructureGCP.enabled = true;
+            // @ts-ignore
+            text.providers.infrastructureGCP.enableAutomaticUpdate = true;
+            // @ts-ignore
+            text.providers.infrastructureGCP.variables.GCP_B64ENCODED_CREDENTIALS = '';
+
+            // @ts-ignore
+            text.providers.infrastructureAzure.enabled = true;
+            // @ts-ignore
+            text.providers.infrastructureAzure.enableAutomaticUpdate = true;
+
+            // @ts-ignore
+            text.providers.infrastructureAWS.enabled = true;
+            // @ts-ignore
+            text.providers.infrastructureAWS.enableAutomaticUpdate = true;
+          }
+        if (isCypressTag('@vsphere')) {
+            // @ts-ignore
+            text.providers.infrastructureVSphere.enabled = true;
+            // @ts-ignore
+            text.providers.infrastructureVSphere.enableAutomaticUpdate = true;
+          }
+      }
+      // Install Rancher Turtles Certified Providers chart
+      let operation = isRancherManagerVersion('2.14') && isUpgrade ? 'Upgrade' : 'Install'
+      let turtlesProvidersChartVersion = providersChartNeedsStgRegistry() && isRancherManagerVersion('2.13') ? '0.25' : undefined // TODO: Remove this once https://github.com/rancher/rancher/issues/53882 and 53883 is fixed; staging registry is currently broken for everything
+      cy.checkChart('local', operation, vars.turtlesProvidersChartName, turtlesNamespace, {
+        version: turtlesProvidersChartVersion,
+        modifyYAMLOperation: providerSelectionFunction
+      });
     })
+
+    it('Wait for all the providers to be Ready', {retries: 2}, () => {
+      // Adding this extra check so that retry is not needed in other tests.
+      cy.navigateToProviders();
+      cy.waitForAllRowsInState('Ready', vars.shortTimeout);
+    })
+
+    it('Verify Core CAPI Provider', () => {
+      cy.navigateToProviders();
+      matchAndWaitForProviderReadyStatus(coreCAPIProvider, 'core', coreCAPIProvider, coreCAPIProviderVersion, capiNamespace);
+    });
+
+    it('Verify Fleet addon provider', () => {
+      cy.navigateToProviders();
+      matchAndWaitForProviderReadyStatus(fleetProvider, 'addon', fleetProvider, fleetProviderVersion, 'fleet-addon-system');
+    });
 
     // TODO: Use wizard to create providers, capi-ui-extension/issues/177
-    kubeadmProviderTypes.forEach(providerType => {
-      qase(27,
-        it('Create Kubeadm Providers - ' + providerType, () => {
-          // Create CAPI Kubeadm providers
-          if (providerType == 'control plane') {
-            // https://github.com/kubernetes-sigs/cluster-api/releases/v1.10.5/control-plane-components.yaml
-            const providerURL = kubeadmBaseURL + kubeadmProviderVersion + '/' + 'control-plane' + '-components.yaml'
-            const providerName = kubeadmProvider + '-' + 'control-plane'
-            cy.addCustomProvider(providerName, 'capi-kubeadm-control-plane-system', kubeadmProvider, providerType, kubeadmProviderVersion, providerURL);
-            matchAndWaitForProviderReadyStatus(providerName, 'controlPlane', kubeadmProvider, kubeadmProviderVersion, 120000);
-          } else {
-            // https://github.com/kubernetes-sigs/cluster-api/releases/v1.10.5/bootstrap-components.yaml
-            const providerURL = kubeadmBaseURL + kubeadmProviderVersion + '/' + providerType + '-components.yaml'
-            const providerName = kubeadmProvider + '-' + providerType
-            cy.addCustomProvider(providerName, 'capi-kubeadm-bootstrap-system', kubeadmProvider, providerType, kubeadmProviderVersion, providerURL);
-            matchAndWaitForProviderReadyStatus(providerName, providerType, kubeadmProvider, kubeadmProviderVersion, 120000);
-          }
-        })
-      );
+    providerTypes.forEach(providerType => {
+      it('Create/Verify Kubeadm Providers - ' + providerType, () => {
+        // Create CAPI Kubeadm providers
+        if (providerType == 'control plane') {
+          const namespace = kubeadmProviderNamespaces[1]
+          const providerName = kubeadmProvider + '-' + 'control-plane'
+          cy.navigateToProviders();
+          matchAndWaitForProviderReadyStatus(providerName, 'controlPlane', kubeadmProvider, kubeadmProviderVersion, namespace);
+        } else {
+          const namespace = kubeadmProviderNamespaces[0]
+          const providerName = kubeadmProvider + '-' + providerType
+          cy.navigateToProviders()
+          matchAndWaitForProviderReadyStatus(providerName, providerType, kubeadmProvider, kubeadmProviderVersion, namespace);
+        }
+      })
+
+      it('Verify RKE2 Providers - ' + providerType, () => {
+        if (providerType == 'control plane') {
+          const namespace = 'rke2-control-plane-system'
+          const providerName = rke2Provider + '-' + 'control-plane'
+          cy.navigateToProviders();
+          matchAndWaitForProviderReadyStatus(providerName, 'controlPlane', rke2Provider, rke2ProviderVersion, namespace);
+        } else {
+          const namespace = 'rke2-bootstrap-system'
+          const providerName = rke2Provider + '-' + providerType
+          cy.navigateToProviders();
+          matchAndWaitForProviderReadyStatus(providerName, providerType, rke2Provider, rke2ProviderVersion, namespace);
+        }
+      });
     })
-
-    qase(4,
-      it('Create CAPD provider', () => {
-        // Create Docker Infrastructure provider
-        const namespace = 'capd-system'
-        cy.addInfraProvider('Docker', namespace);
-        matchAndWaitForProviderReadyStatus(dockerProvider, 'infrastructure', dockerProvider, kubeadmProviderVersion, 120000);
-        cy.verifyCAPIProviderImage(dockerProvider, namespace);
-      })
-    );
-
-    qase(90,
-      // HelmApps to be used across all specs
-      it('Add Applications fleet repo', () => {
-        // Add upstream apps repo
-        cy.addFleetGitRepo('helm-apps', turtlesRepoUrl, branch, 'examples/applications/', 'capi-clusters');
-      })
-    );
 
     xit('Custom Fleet addon config', () => {
       // Skipped as we are unable to install Monitoring app on clusters without cattle-fleet-system namespace
@@ -154,85 +234,84 @@ describe('Enable CAPI Providers', () => {
       const clusterName = 'local';
       const resourceKind = 'configMap';
       const resourceName = 'fleet-addon-config';
-      const namespace = 'rancher-turtles-system';
-      const patch = { data: { manifests: { isNestedIn: true, spec: { cluster: { selector: { matchLabels: { cni: 'by-fleet-addon-kindnet' } } } } } } };
-
-      cy.patchYamlResource(clusterName, namespace, resourceKind, resourceName, patch);
-    });
-
-    it('Check Fleet addon provider', () => {
-      // Fleet addon provider is provisioned automatically when enabled during installation
-      cy.checkCAPIMenu();
-      cy.contains('Providers').click();
-      matchAndWaitForProviderReadyStatus(fleetProvider, 'addon', fleetProvider, fleetProviderVersion, 30000);
+      const namespace = turtlesNamespace;
+      const patch = {
+        data: {
+          manifests: {
+            isNestedIn: true,
+            spec: {cluster: {selector: {matchLabels: {cni: 'by-fleet-addon-kindnet'}}}}
+          }
+        }
+      };
+       cy.patchYamlResource(clusterName, namespace, resourceKind, resourceName, patch);
     });
   });
 
-  context('vSphere provider', { tags: '@vsphere' }, () => {
-    it('Create CAPI Providers Namespace - ' + vsphereProviderNamespace, () => {
-      cy.createNamespace(vsphereProviderNamespace);
+  context('Docker provider', {tags: '@short'}, () => {
+    const dockerProviderNamespace = 'capd-system'
+    it('Create/Verify CAPD provider', () => {
+      // Create Docker Infrastructure provider
+      cy.navigateToProviders();
+      matchAndWaitForProviderReadyStatus(dockerProvider, 'infrastructure', dockerProvider, kubeadmProviderVersion, dockerProviderNamespace);
     })
-    qase(40,
-      it('Create CAPV provider', () => {
-        // Create vsphere Infrastructure provider
-        // See capv_rke2_cluster.spec.ts for more details about `vsphere_secrets_json_base64` structure
-        const vsphere_secrets_json_base64 = Cypress.env("vsphere_secrets_json_base64")
-        // Decode the base64 encoded secret and make json object
-        const vsphere_secrets_json = JSON.parse(Buffer.from(vsphere_secrets_json_base64, 'base64').toString('utf-8'))
-        // Access keys from the json object
-        const vsphereUsername = vsphere_secrets_json.vsphere_username;
-        const vspherePassword = vsphere_secrets_json.vsphere_password;
-        const vsphereServer = vsphere_secrets_json.vsphere_server;
-        const vspherePort = '443';
-        cy.addCloudCredsVMware(vsphereProvider, vsphereUsername, vspherePassword, vsphereServer, vspherePort);
-        cy.burgerMenuOperate('open');
-        cy.addInfraProvider('vSphere', vsphereProviderNamespace, vsphereProvider);
-        matchAndWaitForProviderReadyStatus(vsphereProvider, 'infrastructure', vsphereProvider, vsphereProviderVersion, 120000);
-        cy.verifyCAPIProviderImage(vsphereProvider, vsphereProviderNamespace);
-      })
-    );
   })
 
-  context('Cloud Providers', { tags: '@full' }, () => {
+  context('vSphere provider', {tags: '@vsphere'}, () => {
+    const vsphereProviderNamespace = 'capv-system'
+    it('Create/Verify CAPV provider', () => {
+      // Create vsphere Infrastructure provider
+      // See capv_rke2_cluster.spec.ts for more details about `vsphere_secrets_json_base64` structure
+      const vsphere_secrets_json_base64 = Cypress.expose("vsphere_secrets_json_base64")
+      // Decode the base64 encoded secret and make json object
+      const vsphere_secrets_json = JSON.parse(Buffer.from(vsphere_secrets_json_base64, 'base64').toString('utf-8'))
+      // Access keys from the json object
+      const vsphereUsername = vsphere_secrets_json.vsphere_username;
+      const vspherePassword = vsphere_secrets_json.vsphere_password;
+      const vsphereServer = vsphere_secrets_json.vsphere_server;
+      const vspherePort = '443';
+      cy.addCloudCredsVMware(vsphereProvider, vsphereUsername, vspherePassword, vsphereServer, vspherePort);
+      cy.burgerMenuOperate('open');
+      cy.navigateToProviders();
+      matchAndWaitForProviderReadyStatus(vsphereProvider, 'infrastructure', vsphereProvider, vsphereProviderVersion, vsphereProviderNamespace);
+    })
+  })
+
+  context('Cloud Providers', {tags: '@full'}, () => {
     const providerType = 'infrastructure'
-    cloudProviderNamespaces.forEach(namespace => {
-      it('Create CAPI Cloud Providers Namespaces - ' + namespace, () => {
-        cy.createNamespace(namespace);
-      })
+    it('Create/Verify CAPA provider', () => {
+      const namespace = 'capa-system'
+      // Create AWS Infrastructure provider
+      cy.addCloudCredsAWS(amazonProvider, Cypress.expose('aws_access_key'), Cypress.expose('aws_secret_key'));
+      cy.burgerMenuOperate('open');
+      cy.navigateToProviders();
+      matchAndWaitForProviderReadyStatus(amazonProvider, providerType, amazonProvider, amazonProviderVersion, namespace);
     })
 
-    qase(13,
-      it('Create CAPA provider', () => {
-        const namespace = 'capa-system'
-        // Create AWS Infrastructure provider
-        cy.addCloudCredsAWS(amazonProvider, Cypress.env('aws_access_key'), Cypress.env('aws_secret_key'));
-        cy.burgerMenuOperate('open');
-        cy.addInfraProvider('Amazon', namespace, amazonProvider);
-        matchAndWaitForProviderReadyStatus(amazonProvider, providerType, amazonProvider, amazonProviderVersion, 120000);
-        cy.verifyCAPIProviderImage(amazonProvider, namespace);
-      })
-    );
+    it('Create/Verify CAPG provider', () => {
+      const namespace = 'capg-system'
+      // Create GCP Infrastructure provider
+      cy.navigateToProviders();
 
-    qase(28,
-      it('Create CAPG provider', () => {
-        const namespace = 'capg-system'
-        // Create GCP Infrastructure provider
-        cy.addCloudCredsGCP(googleProvider, Cypress.env('gcp_credentials'));
-        cy.burgerMenuOperate('open');
-        cy.addInfraProvider('Google Cloud Platform', namespace, googleProvider);
-        matchAndWaitForProviderReadyStatus(googleProvider, providerType, googleProvider, googleProviderVersion, 120000);
-        cy.verifyCAPIProviderImage(googleProvider, namespace);
+      // Create GCP Cloud Credential until https://github.com/rancher/dashboard/issues/15391 is fixed
+      cy.get('tr.main-row').contains('a', googleProvider).closest('tr').within(() => {
+        cy.get('td').eq(7).click();      // Action button
       })
-    );
+      cy.contains('Edit Config').click();
+      cy.contains(`Provider: Google - ${googleProvider}`).should('exist');
+      cy.typeValue('Credential Name', googleProvider);
+      cy.getBySel('text-area-auto-grow').type(Cypress.expose('gcp_credentials'), {log: false});
+      cy.clickButton('Continue');
+      cy.getBySel('cluster-prov-select-credential').contains(googleProvider).should('be.visible');
+      cy.clickButton('Save');
+      matchAndWaitForProviderReadyStatus(googleProvider, providerType, googleProvider, googleProviderVersion, namespace);
+    })
 
-    qase(20, it('Create CAPZ provider', () => {
+    it('Create/Verify CAPZ provider', () => {
       const namespace = 'capz-system'
       // Create Azure Infrastructure provider
-      cy.addInfraProvider('Azure', namespace, azureProvider);
-      matchAndWaitForProviderReadyStatus(azureProvider, providerType, azureProvider, azureProviderVersion, 180000);
-      cy.verifyCAPIProviderImage(azureProvider, namespace);
+      cy.navigateToProviders();
+      matchAndWaitForProviderReadyStatus(azureProvider, providerType, azureProvider, azureProviderVersion, namespace);
     })
-    );
   })
-
 });
+}

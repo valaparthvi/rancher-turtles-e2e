@@ -1,6 +1,6 @@
 {{- $cluster_name := printf "%s-%s" .Values.clustername_prefix (randAlphaNum 4) | lower -}}
 ---
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: Cluster
 metadata:
   name: {{ $cluster_name }}
@@ -19,18 +19,19 @@ spec:
       - 10.46.0.0/16
     serviceDomain: cluster.local
   topology:
-    class: docker-rke2-example
-    classNamespace: capi-classes
+    classRef:
+      name: docker-rke2-example
+      namespace: capi-classes
     controlPlane:
       replicas: 3
     variables:
     - name: rke2CNI
       value: none
     - name: dockerImage
-      value: kindest/node:v1.31.4
+      value: kindest/node:v1.34.0
     - name: dockerAuthSecret
       value: capd-docker-token
-    version: v1.31.7+rke2r1
+    version: v1.34.1+rke2r1
     workers:
       machineDeployments:
       - class: default-worker

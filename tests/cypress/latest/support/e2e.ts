@@ -16,9 +16,12 @@ import './commands';
 import yaml from 'js-yaml';
 import './capz_support';
 import './cleanup_support';
-import {Cluster, Question} from './structs';
-// @ts-expect-error ignore the error
-import registerCypressGrep from '@cypress/grep'
+import {ChartInstallExtraOptions, Cluster} from './structs';
+import {register as registerCypressGrep} from '@cypress/grep'
+
+// This ensures the qase() function exists globally before ANY spec file loads
+(window as any).qase = (id: any, fn: any) => fn;
+console.log('Qase global initialized');
 
 declare global {
   namespace Cypress {
@@ -30,28 +33,35 @@ declare global {
       addFleetGitRepo(repoName: string, repoUrl: string, branch: string, paths: string | string[], targetNamespace?: string, workspace?: string): Chainable<Element>;
       removeFleetGitRepo(repoName: string, workspace?: string): Chainable<Element>;
       forceUpdateFleetGitRepo(repoName: string, workspace?: string): Chainable<Element>;
-      checkFleetGitRepo(repoName: string, workspace?: string): Chainable<Element>;
+      goToFleetGitRepos(workspace?: string): Chainable<Element>;
+      checkFleetGitRepoActive(repoName: string, workspace?: string): Chainable<Element>;
       fleetNamespaceToggle(toggleOption: string): Chainable<Element>;
       verifyTableRow(rowNumber: number, expectedText1?: string | RegExp, expectedText2?: string | RegExp): Chainable<Element>;
+
       waitForAllRowsInState(desiredState: string, timeout?: number): Chainable<Element>;
       accesMenuSelection(menuPaths: string[]): Chainable<Element>;
       burgerMenuOperate(operation: 'open' | 'close'): Chainable<Element>;
-      checkChart(operation: string, chartName: string, namespace: string, version?: string, questions?: Question[], refreshRepo?: boolean): Chainable<Element>;
+
+      checkChart(clusterName: string, operation: string, chartName: string, namespace: string, options?: ChartInstallExtraOptions): Chainable<Element>;
 
       deleteCluster(clusterName: string, timeout?: number): Chainable<Element>;
       searchCluster(clusterName: string): Chainable<Element>;
-      createNamespace(namespace: string): Chainable<Element>;
+      createNamespace(namespaces: string[]): Chainable<Element>;
+      deleteNamespace(namespaces: string[]): Chainable<Element>;
       setNamespace(namespace: string, namespaceID?: string): Chainable<Element>;
 
       createCAPICluster(cluster: Cluster): Chainable<Element>;
       checkCAPICluster(clustername: string): Chainable<Element>;
       checkCAPIClusterClass(classname: string): Chainable<Element>;
-      checkCAPIClusterActive(clustername: string, timeout?: number): Chainable<Element>;
+
+      checkCAPIClusterActive(clustername: string, timeout?: number, skipMDCheck?: boolean): Chainable<Element>; // skipMDCheck is required while using MachinePools, in case of GKE
       checkCAPIClusterProvisioned(clustername: string, timeout?: number): Chainable<Element>;
       checkCAPIClusterDeleted(clustername: string, timeout: number): Chainable<Element>;
       checkCAPIMenu(): Chainable<Element>;
-      checkFleetHelmApps(appList: string[]): Chainable<Element>;
+      checkFleetHelmOps(appList: string[]): Chainable<Element>;
       namespaceReset(): Chainable<Element>;
+
+      navigateToProviders(): Chainable<Element>;
       addCustomProvider(name: string, namespace: string, providerName: string, providerType: string, version?: string, url?: string): Chainable<Element>;
       addInfraProvider(providerType: string, namespace: string, cloudCredentials?: string): Chainable<Element>;
       removeCAPIResource(resourceType: string, resourceName: string, timeout?: number): Chainable<Element>;
@@ -59,7 +69,8 @@ declare global {
       addCloudCredsGCP(name: string, gcpCredentials: string): Chainable<Element>;
       addCloudCredsAzure(name: string, clientID: string, clientSecret: string, subscriptionID: string): Chainable<Element>;
       addCloudCredsVMware(name: string, vsphere_username: string, vsphere_password: string, vsphere_server: string, vsphere_server_port: string): Chainable<Element>;
-      addRepository(repositoryName: string, repositoryURL: string, repositoryType: string, repositoryBranch: string): Chainable<Element>;
+
+      addRepository(repositoryName: string, repositoryURL: string, repositoryType: 'oci' | 'http' | 'git', repositoryBranch: string): Chainable<Element>;
 
       typeInFilter(text: string, selector?: string): Chainable<Element>;
       goToHome(): Chainable<Element>;
@@ -71,10 +82,11 @@ declare global {
       createAWSClusterStaticIdentity(accessKey: string, secretKey: string): Chainable<Element>;
       createCAPIProvider(providerName: string): Chainable<Element>;
       checkCAPIProvider(providerName: string): Chainable<Element>;
-      verifyCAPIProviderImage(providerName: string, providerNamespace: string): Chainable<Element>;
+      verifyCAPIProviderImage(providerNamespace: string): Chainable<Element>;
+      setCAPIFeature(featureName: string, featureValue: string): Chainable<Element>;
       // Functions declared in capz_support.js
-      createCAPZValuesSecret(clientID: string, tenantID: string, subscriptionID: string): Chainable<Element>;
       createAzureClusterIdentity(clientID: string, tenantID: string, clientSecret: string): Chainable<Element>;
+      createAzureASOCredential(clientID: string, tenantID: string, clientSecret: string, subscriptionID: string): Chainable<Element>;
       deleteKubernetesResource(clusterName: string, resourcePath: string[], resourceName: string, namespace?: string): Chainable<Element>;
     }
   }
@@ -104,27 +116,73 @@ require('cypress-plugin-tab');
 require('@rancher-ecp-qa/cypress-library');
 registerCypressGrep()
 
-// Abort on first failure in @install tests
+// Abort on first failure in @install tests or skip rest of the tests in spec in case of [SETUP] test failure
 const resultFile = './fixtures/runtime_test_result.yaml'
-beforeEach(() => {
-  if (Cypress.env("ci")) {
-    cy.log('Running in GitHub Actions - checking previous test result');
+
+// reset the resultFile before every suite run (i.e. `*.spec.ts`); unless the failure is from @install tests
+before(function () {
+  if (Cypress.expose("ci")) {
+    cy.readFile(resultFile).then((data) => {
+      const content = yaml.load(data);
+      if (content['stop_cypress'] != 'true') {
+        const result = {'test_result': 'passed'}
+        cy.writeFile(resultFile, yaml.dump(result));
+      }
+    })
+  }
+})
+
+beforeEach(function () {
+  if (Cypress.expose("ci")) {
     cy.readFile(resultFile).then((data) => {
       const content = yaml.load(data)
       const result = content['test_result']
-      cy.log('Previous Test Result: ' + result);
+      const stop_cypress = content['stop_cypress']
+      const skip_all_tests = content['skip_all_tests']
+      const run_delete_tests = content['run_delete_tests']
       if (result == 'failed') {
-        cy.log('Stopping test run - previous test(s) have failed')
-        Cypress.stop()
+        if (stop_cypress == 'true') {
+          cy.task('suiteLog', 'Stopping test run - previous test(s) have failed')
+          Cypress.stop()
+        } else if (skip_all_tests == 'true') {
+          // Skip tests if a setup test failed; in case cluster is created, do not skip if it is a @delete test
+          if (run_delete_tests == 'true' && this.currentTest?.fullTitle?.().includes('[TEARDOWN]')) {
+            cy.task('suiteLog', 'CAPI Cluster was created; running delete tests for a proper cleanup.')
+          } else {
+            cy.task('suiteLog', 'A [SETUP]/[CLUSTER-IMPORT] test has failed - skipping rest of the tests.')
+            this.skip();
+          }
+        }
       }
     });
-  } else cy.log('Not running in GitHub Actions - skipping test result check');
+  } else cy.task('suiteLog', 'Not running in GitHub Actions - skipping test result check');
 });
 
 afterEach(function () {
-  if (Cypress.env("ci") && this.currentTest?.state == 'failed' && this.currentTest?.fullTitle?.().includes('@install')) {
-    const result = { test_result: this.currentTest?.state };
-    const data = yaml.dump(result);
-    cy.writeFile(resultFile, data);
+  if (Cypress.expose("ci")) {
+    const test_title = this.currentTest?.fullTitle?.() || '';
+    const test_result = this.currentTest?.state || '';
+
+    if (test_result == 'failed') {
+      let result: Record<string, string> = {
+        test_result: test_result,
+        test_title: test_title,
+        stop_cypress: 'false',
+        skip_all_tests: 'false',
+        run_delete_tests: 'false',
+      };
+
+      if (test_title.includes('@install')) {
+        result['stop_cypress'] = 'true';
+      } else if (test_title.includes('[SETUP]')) {
+        result['skip_all_tests'] = 'true'
+      } else if (test_title.includes('[CLUSTER-IMPORT]')) {
+        result['skip_all_tests'] = 'true'
+        result['run_delete_tests'] = 'true'
+      }
+
+      const data = yaml.dump(result);
+      cy.writeFile(resultFile, data);
+    }
   }
 })

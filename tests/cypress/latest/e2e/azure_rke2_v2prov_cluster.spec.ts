@@ -1,103 +1,134 @@
 import '~/support/commands';
-import {qase} from 'cypress-qase-reporter/mocha';
-import {skipClusterDeletion} from '~/support/utils';
+import {isAPIv1beta1, isRancherManagerVersion, skipClusterDeletion} from '~/support/utils';
 import * as randomstring from "randomstring";
+import {vars} from '~/support/variables';
 
 Cypress.config();
-describe('Create Azure RKE2 Cluster', { tags: '@short' }, () => {
+describe('Create Azure RKE2 Cluster', {tags: ['@short', '@migration']}, () => {
   let userID: string, ccID: string;
-  const timeout = 1200000
+  let features = ['turtles']
+  const timeout = vars.fullTimeout
   const userName = 'admin'
-  const k8sVersion = 'v1.31.7+rke2r1'
-  const clusterName = 'turtles-qa-azure-v2-' + randomstring.generate({ length: 4, capitalization: "lowercase" })
+  const clusterName = 'turtles-qa-azure-v2-' + randomstring.generate({length: 4, capitalization: "lowercase"})
+  const clusterFileName = isAPIv1beta1 ? './fixtures/azure/azure-rke2-cluster-v1beta1.yaml' : './fixtures/azure/azure-rke2-cluster.yaml'
+  const rkeConfigFileName = isAPIv1beta1 ? './fixtures/azure/azure-rke-config-v1beta1.yaml' : './fixtures/azure/azure-rke-config.yaml'
+  const k8sVersion = isAPIv1beta1
+  ? vars.rke2Version
+  : 'v1.35.3+rke2r1'
+
+  if (isRancherManagerVersion('2.13')) {
+    features.push('embedded-cluster-api');
+  }
 
   beforeEach(() => {
     cy.login();
     cy.burgerMenuOperate('open')
   });
 
-  it('Create Azure Cloud credentials', () => {
-    // Create Azure Cloud credentials
-    cy.addCloudCredsAzure('azure', Cypress.env('azure_client_id'), Cypress.env('azure_client_secret'), Cypress.env('azure_subscription_id'));
+  context('[SETUP]', () => {
+    it('Create Azure Cloud credentials', () => {
+      // Create Azure Cloud credentials
+      cy.addCloudCredsAzure('azure', Cypress.expose('azure_client_id'), Cypress.expose('azure_client_secret'), Cypress.expose('azure_subscription_id'));
+    })
+
+    it('Get user ID and Cloud credential ID', () => {
+      cy.accesMenuSelection(['Users & Authentication']);
+      cy.getBySel('router-link-user-retention').should('be.visible');
+      cy.typeInFilter(userName);
+      // Get the user id
+      cy.getBySel('sortable-cell-0-1').then(($cell) => {
+        userID = String($cell.text());
+        cy.task('suiteLog', `User ID: ${userID}`);
+      });
+
+      cy.burgerMenuOperate('open');
+      cy.accesMenuSelection(['Cluster Management', 'Cloud Credentials']);
+      cy.getBySel('sortable-table-list-container').should('be.visible');
+      cy.typeInFilter('azure');
+      // Get the CC id
+      cy.getBySel('sortable-cell-0-0').then(($cell) => {
+        ccID = $cell.text();
+        cy.task('suiteLog', `Cloud credential ID: ${ccID}`);
+      });
+    })
   })
 
-  it('Get user ID and Cloud credential ID', () => {
-    cy.accesMenuSelection(['Users & Authentication']);
-    cy.getBySel('router-link-user-retention').should('be.visible');
-    cy.typeInFilter(userName);
-    // Get the user id
-    cy.getBySel('sortable-cell-0-1').then(($cell) => {
-      userID = String($cell.text());
-      cy.log('User ID:', userID);
-    });
-
-    cy.burgerMenuOperate('open');
-    cy.accesMenuSelection(['Cluster Management', 'Cloud Credentials']);
-    cy.getBySel('sortable-table-list-container').should('be.visible');
-    cy.typeInFilter('azure');
-    // Get the CC id
-    cy.getBySel('sortable-cell-0-0').then(($cell) => {
-      ccID = $cell.text();
-      cy.log('Cloud credential ID:', ccID);
-    });
-  })
-
-  it('Create the AzureConfig', () => {
-    cy.readFile('./fixtures/azure/azure-rke-config.yaml').then((data) => {
-      data = data.replace(/replace_user_id/g, userID)
-      data = data.replace(/replace_cluster_name/g, clusterName)
-      cy.importYAML(data)
-    });
-  })
-
-  // Create Azure RKE2 Cluster using YAML
-  qase(132, it('Create Azure RKE2 Cluster', () => {
-    cy.goToHome();
-    cy.clickButton('Manage');
-    cy.getBySel('cluster-list').should('be.visible');
-    cy.clickButton('Create');
-
-    cy.getBySel('cluster-manager-create-grid-Azure')
-      .should('be.visible')
-      .click();
-
-    cy.getBySel('name-ns-description-name').should('be.visible');
-    cy.getBySel('rke2-custom-create-yaml').click();
-    cy.clickButton('Save and Continue');
-    cy.getBySel('yaml-editor-code-mirror').should('be.visible');
-
-    cy.readFile('./fixtures/azure/azure-rke2-cluster.yaml').then((data) => {
-      cy.get('.CodeMirror')
-        .then((editor) => {
+  features.forEach((feature) => {
+    context('[CLUSTER-IMPORT]', () => {
+      it('Create the AzureConfig', () => {
+        cy.readFile(rkeConfigFileName).then((data) => {
           data = data.replace(/replace_user_id/g, userID)
           data = data.replace(/replace_cluster_name/g, clusterName)
-          data = data.replace(/replace_cloudcred_id/g, ccID)
-          data = data.replace(/replace_rke2_version/g, k8sVersion)
-          // @ts-expect-error expected error with CodeMirror
-          editor[0].CodeMirror.setValue(data);
+          cy.importYAML(data)
+        });
+      })
+
+      // Create Azure RKE2 Cluster using YAML
+      qase(132,
+        it('Create Azure RKE2 Cluster with feature - ' + feature, () => {
+          cy.goToHome();
+          cy.clickButton('Manage');
+          cy.getBySel('cluster-list').should('be.visible');
+          cy.clickButton('Create');
+
+          cy.getBySel('cluster-manager-create-grid-Azure')
+            .should('be.visible')
+            .click();
+
+          cy.getBySel('name-ns-description-name').should('be.visible');
+          cy.getBySel('rke2-custom-create-yaml').click();
+          cy.clickButton('Save and Continue');
+          cy.getBySel('yaml-editor-code-mirror').should('be.visible');
+
+          cy.readFile(clusterFileName).then((data) => {
+            cy.get('.CodeMirror')
+              .then((editor) => {
+                data = data.replace(/replace_user_id/g, userID)
+                data = data.replace(/replace_cluster_name/g, clusterName)
+                data = data.replace(/replace_cloudcred_id/g, ccID)
+                data = data.replace(/replace_rke2_version/g, k8sVersion)
+                // @ts-expect-error expected error with CodeMirror
+                editor[0].CodeMirror.setValue(data);
+              })
+            });
+          cy.clickButton('Create');
+          cy.getBySel('cluster-list').should('be.visible');
+
+          // Check cluster is Active
+          cy.searchCluster(clusterName);
+          cy.contains(new RegExp('Active.*' + clusterName), {timeout: timeout});
+
+          // Check provisioning status
+          cy.getBySel('sortable-cell-0-1').click();
+          cy.getBySel('log').click();
+          cy.contains('[INFO ] provisioning done');
+
+          if (isRancherManagerVersion('2.13')) {
+            // Switch the features
+            if (feature == 'turtles') {
+              cy.setCAPIFeature('embedded-cluster-api', 'true');
+              cy.setCAPIFeature(feature, 'false');
+            } else {
+              cy.setCAPIFeature('turtles', 'true');
+            }
+          }
+          // Check cluster is Active
+          cy.searchCluster(clusterName);
+          cy.contains(new RegExp('Active.*' + clusterName), {timeout: timeout});
         })
-    });
-    cy.clickButton('Create');
-    cy.getBySel('cluster-list').should('be.visible');
-
-    // Check cluster is Active
-    cy.searchCluster(clusterName);
-    cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
-
-    // Check provisioning status
-    cy.getBySel('sortable-cell-0-1').click();
-    cy.getBySel('log').click();
-    cy.contains('[INFO ] provisioning done');
-  })
-  );
-
-  if (skipClusterDeletion) {
-    it('Delete Azure RKE2 cluster from Rancher Manager', () => {
-      cy.deleteCluster(clusterName, timeout);
-      cy.goToHome();
-      // kubectl get clusters.cluster.x-k8s.io
-      // This is checked by ensuring the cluster is not available in navigation menu
-      cy.contains(clusterName).should('not.exist');
+      );
     })
-  }
+
+    context('[TEARDOWN]', () => {
+      if (skipClusterDeletion) {
+        it('Delete Azure RKE2 cluster from Rancher Manager', () => {
+          cy.deleteCluster(clusterName, timeout);
+          cy.goToHome();
+          // kubectl get clusters.cluster.x-k8s.io
+          // This is checked by ensuring the cluster is not available in navigation menu
+          cy.contains(clusterName).should('not.exist');
+        })
+      }
+    })
+  })
 });

@@ -1,9 +1,11 @@
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: Cluster
 metadata:
   name: replace_cluster_name
   labels:
     cni: calico
+  annotations:
+    cluster-api.cattle.io/cluster-description: "This is a custom description of Rancher Cluster"
 spec:
   clusterNetwork:
     pods:
@@ -14,10 +16,10 @@ spec:
       cidrBlocks:
         - 10.128.0.0/12
   topology:
-    class: docker-kubeadm-example
-    classNamespace: capi-classes
+    classRef:
+      name: docker-kubeadm-example
+      namespace: capi-classes
     controlPlane:
-      metadata: { }
       replicas: 3
     variables:
       - name: imageRepository
@@ -34,7 +36,7 @@ spec:
           warn: restricted
       - name: imagePullSecret
         value: docker-config
-    version: v1.31.4
+    version: replace_kindVersion
     workers:
       machineDeployments:
         - class: default-worker

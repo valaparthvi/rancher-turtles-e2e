@@ -13,105 +13,106 @@ limitations under the License.
 
 import '~/support/commands';
 import * as cypressLib from '@rancher-ecp-qa/cypress-library';
-import {skipClusterDeletion} from '~/support/utils';
+import {isAPIv1beta1, skipClusterDeletion} from '~/support/utils';
 import {capdResourcesCleanup, capiClusterDeletion, importedRancherClusterDeletion} from "~/support/cleanup_support";
+import {vars} from '~/support/variables';
 
 Cypress.config();
-describe('Import CAPD RKE2 Class-Cluster', { tags: '@short' }, () => {
+describe('Import CAPD RKE2 Class-Cluster using Fleet', {tags: '@short'}, () => {
   let clusterName: string
-  const timeout = 600000
+  const timeout = vars.shortTimeout
   const classNamePrefix = 'docker-rke2'
-  const repoUrl = 'https://github.com/rancher/rancher-turtles-e2e.git'
-  const path = '/tests/assets/rancher-turtles-fleet-example/capd/rke2/class-clusters'
-  const branch = 'main'
-  const turtlesRepoUrl = 'https://github.com/rancher/turtles'
+  const path = isAPIv1beta1 ? '/tests/assets/rancher-turtles-fleet-example/capd/rke2/class-clusters-v1beta1' : '/tests/assets/rancher-turtles-fleet-example/capd/rke2/class-clusters'
   const classesPath = 'examples/clusterclasses/docker/rke2'
   const clustersRepoName = 'docker-rke2-class-clusters'
   const clusterClassRepoName = "docker-rke2-clusterclass"
-  const dockerAuthUsernameBase64 = btoa(Cypress.env("docker_auth_username"))
-  const dockerAuthPasswordBase64 = btoa(Cypress.env("docker_auth_password"))
-  const capiClustersNS = 'capi-clusters'
+  const dockerAuthUsernameBase64 = btoa(Cypress.expose("docker_auth_username"))
+  const dockerAuthPasswordBase64 = btoa(Cypress.expose("docker_auth_password"))
 
   beforeEach(() => {
     cy.login();
     cy.burgerMenuOperate('open');
   });
-
-  it('Setup the namespace for importing', () => {
-    cy.namespaceAutoImport('Disable');
-  })
-
-  it('Create Docker Auth Secret', () => {
-    // Prevention for Docker.io rate limiting
-    cy.readFile('./fixtures/docker/capd-auth-token-secret.yaml').then((data) => {
-      data = data.replace(/replace_cluster_docker_auth_username/, dockerAuthUsernameBase64)
-      data = data.replace(/replace_cluster_docker_auth_password/, dockerAuthPasswordBase64)
-      cy.importYAML(data, capiClustersNS)
+  context('[SETUP]', () => {
+    it('Setup the namespace for importing', () => {
+      cy.namespaceAutoImport('Disable');
     })
-  });
 
-  it('Add CAPD RKE2 ClusterClass Fleet Repo', () => {
-    cy.addFleetGitRepo(clusterClassRepoName, turtlesRepoUrl, 'main', classesPath, 'capi-classes')
-    // Go to CAPI > ClusterClass to ensure the clusterclass is created
-    cy.checkCAPIClusterClass(classNamePrefix);
-  })
-
-  it('Add CAPD cluster fleet repo and get cluster name', () => {
-    cypressLib.checkNavIcon('cluster-management').should('exist');
-    cy.addFleetGitRepo(clustersRepoName, repoUrl, branch, path);
-
-    // Check CAPI cluster using its name prefix i.e. className
-    cy.checkCAPICluster(classNamePrefix);
-    // Get the cluster name by its prefix and use it across the test
-    cy.getBySel('sortable-cell-0-1').then(($cell) => {
-      clusterName = $cell.text();
-      cy.log('CAPI Cluster Name:', clusterName);
+    it('Create Docker Auth Secret', () => {
+      // Prevention for Docker.io rate limiting
+      cy.readFile('./fixtures/docker/capd-auth-token-secret.yaml').then((data) => {
+        data = data.replace(/replace_cluster_docker_auth_username/, dockerAuthUsernameBase64)
+        data = data.replace(/replace_cluster_docker_auth_password/, dockerAuthPasswordBase64)
+        cy.importYAML(data, vars.capiClustersNS)
+      })
     });
+
+    it('Add CAPD RKE2 ClusterClass Fleet Repo', () => {
+      cy.addFleetGitRepo(clusterClassRepoName, vars.turtlesRepoUrl, vars.classBranch, classesPath, vars.capiClassesNS)
+      // Go to CAPI > ClusterClass to ensure the clusterclass is created
+      cy.checkCAPIClusterClass(classNamePrefix);
+    })
   })
 
+  context('[CLUSTER-IMPORT]', () => {
+    it('Add CAPD cluster fleet repo and get cluster name', () => {
+      cypressLib.checkNavIcon('cluster-management').should('exist');
+      cy.addFleetGitRepo(clustersRepoName, vars.repoUrl, vars.branch, path);
 
-  it('Auto import child CAPD cluster', () => {
-    // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
-    cy.checkCAPIClusterProvisioned(clusterName, timeout);
+      // Check CAPI cluster using its name prefix i.e. className
+      cy.checkCAPICluster(classNamePrefix);
+      // Get the cluster name by its prefix and use it across the test
+      cy.getBySel('sortable-cell-0-1').then(($cell) => {
+        clusterName = $cell.text();
+        cy.task('suiteLog',`CAPI Cluster Name: ${clusterName}`);
+      });
+    })
 
-    // Check child cluster is created and auto-imported
-    // This is checked by ensuring the cluster is available in navigation menu
-    cy.goToHome();
-    cy.contains(clusterName).should('exist');
+    it('Auto import child CAPD cluster', () => {
+      // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
+      cy.checkCAPIClusterProvisioned(clusterName, timeout);
 
-    // Check cluster is Active
-    cy.searchCluster(clusterName);
-    cy.contains(new RegExp('Active.*' + clusterName), { timeout: timeout });
+      // Check child cluster is created and auto-imported
+      // This is checked by ensuring the cluster is available in navigation menu
+      cy.goToHome();
+      cy.contains(clusterName).should('exist');
 
-    // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
-    // Ensuring cluster is provisioned also ensures all the Cluster Management > Advanced > Machines for the given cluster are Active.
-    cy.checkCAPIClusterActive(clusterName, timeout);
+      // Check cluster is Active
+      cy.searchCluster(clusterName);
+      cy.contains(new RegExp('Active.*' + clusterName), {timeout: timeout});
+
+      // Go to Cluster Management > CAPI > Clusters and check if the cluster has provisioned
+      // Ensuring cluster is provisioned also ensures all the Cluster Management > Advanced > Machines for the given cluster are Active.
+      cy.checkCAPIClusterActive(clusterName, timeout);
+    })
   })
 
-  it('Install App on imported cluster', () => {
-    // Click on imported CAPD cluster
-    cy.contains(clusterName).click();
+  context('[CLUSTER-OPERATIONS]', () => {
+    it('Install App on imported cluster', {retries: 1}, () => {
+      cy.checkChart(clusterName, 'Install', 'Logging', 'cattle-logging-system');
+    })
 
-    // Install Chart
-    // We install Logging chart instead of Monitoring, since this is relatively lightweight.
-    cy.checkChart('Install', 'Logging', 'cattle-logging-system');
-  })
-
-  if (skipClusterDeletion) {
-    it('Remove imported CAPD cluster from Rancher Manager and Delete the CAPD cluster', {retries: 1}, () => {
+    it('Remove imported CAPD cluster from Rancher Manager', {retries: 1}, () => {
       // Delete the imported cluster
       // Ensure that the provisioned CAPI cluster still exists
       // this check can fail, ref: https://github.com/rancher/turtles/issues/1587
       importedRancherClusterDeletion(clusterName);
-      // Remove CAPI Resources related to the cluster
-      capiClusterDeletion(clusterName, timeout, clustersRepoName, true);
     })
+  })
 
-    it('Delete the ClusterClass fleet repo', () => {
-      // Remove the clusterclass repo
-      cy.removeFleetGitRepo(clusterClassRepoName);
-      // Cleanup other resources
-      capdResourcesCleanup();
-    })
-  }
+  context('[TEARDOWN]', () => {
+    if (skipClusterDeletion) {
+      it('Delete the CAPD cluster', {retries: 1}, () => {
+        // Remove CAPI Resources related to the cluster
+        capiClusterDeletion(clusterName, timeout, clustersRepoName, true);
+      })
+
+      it('Delete the ClusterClass fleet repo', () => {
+        // Remove the clusterclass repo
+        cy.removeFleetGitRepo(clusterClassRepoName);
+        // Cleanup other resources
+        capdResourcesCleanup();
+      })
+    }
+  })
 });

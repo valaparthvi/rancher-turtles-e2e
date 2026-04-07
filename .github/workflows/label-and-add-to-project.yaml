@@ -12,6 +12,8 @@ on:
 
 jobs:
   add_label:
+    # Skip for Dependabot PRs
+    if: ${{ !startsWith(github.head_ref, 'dependabot/') }}
     env:
       SQUAD_QA_LABEL: "squad/qa"
       PROJECT_NAME: "@valaparthvi's untitled project"
@@ -22,7 +24,7 @@ jobs:
       pull-requests: write
     steps:
     - name: Checkout
-      uses: actions/checkout@v5
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
     - name: Label assigned issues and add them to project board
       if: github.event_name == 'issues'
