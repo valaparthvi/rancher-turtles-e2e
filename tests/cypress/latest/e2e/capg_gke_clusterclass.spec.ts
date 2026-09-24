@@ -85,10 +85,11 @@ describe('Import CAPG GKE Class-Cluster', {tags: ['@full', '@capgke']}, () => {
       })
     );
 
-    it('Check for any errors in Turtles logs', () => {
+    qase(539, it('Check for any errors in Turtles logs', () => {
       // Check for any errors
       cy.filterPodErrorLogs('rancher-turtles-controller-manager');
     })
+    );
   })
 
   context('[TEARDOWN]', () => {
