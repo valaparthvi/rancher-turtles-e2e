@@ -112,10 +112,11 @@ describe('Import CAPA EKS Class-Cluster', {tags: ['@full', '@capaeks']}, () => {
     })
     );
 
-    it('Check for any errors in Turtles logs', () => {
+    qase(538, it('Check for any errors in Turtles logs', () => {
       // Check for any errors
       cy.filterPodErrorLogs('rancher-turtles-controller-manager');
     })
+    );
   })
 
   context('[TEARDOWN]', () => {
