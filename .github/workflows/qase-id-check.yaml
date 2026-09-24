@@ -95,6 +95,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           GH_REPO: ${{ github.repository }}
+          NEEDS_REVIEW: ${{ steps.sync.outputs.needs_review }}
         run: |
           # Checked before the push: afterwards the branch has already been
           # rewritten, so an existing PR would silently change contents.
@@ -112,7 +113,27 @@ jobs:
           {
             printf '### What does this PR do?\n'
             printf 'Automated update of Qase IDs in Cypress tests generated after running `qase-sync.mjs --fix`.\n\n'
-            printf '### Checklist:\n- [x] Added/Modified Qase IDs\n\n'
+
+            # The whole point of the banner: merging this PR does not finish the job
+            # when the script had to leave IDs behind.
+            if [[ "${NEEDS_REVIEW}" == 'true' ]]; then
+              printf '> [!WARNING]\n'
+              printf '> **Some Qase IDs still need a manual change.** This PR carries only what could be\n'
+              printf '> repaired automatically.\n'
+              printf '>\n'
+              printf '> In the report below, look for `NO REPLACEMENT` and `NO MATCH` (no unclaimed Qase\n'
+              printf '> case matched the test, so the case likely has to be created or retitled in Qase)\n'
+              printf '> and the **Needs manual review** section (IDs the script cannot read statically,\n'
+              printf '> such as tests generated in a `forEach` loop - those have to be wired up by hand).\n\n'
+            fi
+
+            printf '### Checklist:\n'
+            printf '%s\n' '- [x] Added/Modified Qase IDs'
+            if [[ "${NEEDS_REVIEW}" == 'true' ]]; then
+              printf '%s\n' '- [ ] Resolved the IDs flagged below as needing a manual change'
+            fi
+            printf '\n'
+
             printf '<details><summary>qase-sync report</summary>\n\n'
             printf '```text\n'
             # Backticks are dropped so a Qase case title cannot close the fence and
