@@ -119,12 +119,7 @@ jobs:
             if [[ "${NEEDS_REVIEW}" == 'true' ]]; then
               printf '> [!WARNING]\n'
               printf '> **Some Qase IDs still need a manual change.** This PR carries only what could be\n'
-              printf '> repaired automatically.\n'
-              printf '>\n'
-              printf '> In the report below, look for `NO REPLACEMENT` and `NO MATCH` (no unclaimed Qase\n'
-              printf '> case matched the test, so the case likely has to be created or retitled in Qase)\n'
-              printf '> and the **Needs manual review** section (IDs the script cannot read statically,\n'
-              printf '> such as tests generated in a `forEach` loop - those have to be wired up by hand).\n\n'
+              printf '> repaired automatically - see the report below for the rest.\n\n'
             fi
 
             printf '### Checklist:\n'
