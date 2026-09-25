@@ -21,11 +21,16 @@ Usage:
 
 Reads QASE_API_TOKEN and QASE_PROJECT_CODE from the environment; both are required.
 
-Exit codes: 0 clean, 1 drift found, 2 error.
+Exit codes: 0 clean, 1 needs a human, 2 error.
 
-Only stale, missing and duplicate count towards the exit code: they are the ones
-this script can repair. qase-only cases, title/suite mismatches and anything on
-the manual-review list are reported but never fail the run.
+Everything a person has to act on counts towards the exit code: stale, missing
+and duplicate, which this script can repair, plus the manual-review list, which
+it cannot. Under --fix the first three drop out once they are rewritten, so a
+clean run ends at 0 while an unreadable loop or computed ID keeps it at 1.
+
+qase-only cases and title/suite mismatches never fail the run: a case with no
+local test, or a test that was legitimately renamed, is not something a change
+to the specs would resolve.
 */
 
 import {existsSync, readdirSync} from 'node:fs';
@@ -95,8 +100,8 @@ function buildSuitePaths(suites) {
 // --------------------------------------------------------------------------- //
 // Reading the specs
 //
-// Only literal titles and IDs are understood. Anything computed - the three
-// forEach loops that generate tests - is handed back to the user instead.
+// Only literal titles and IDs are understood. Anything computed - the forEach
+// loops that generate tests - is handed back to the user instead.
 // --------------------------------------------------------------------------- //
 
 /** A string literal's value, or null if the title is not a plain literal. */
@@ -126,6 +131,37 @@ function numericLiterals(node) {
     .map((literal) => literal.getLiteralValue());
 }
 
+/** The initializer of the `const` an identifier names, searched file-wide. */
+function declaredValue(identifier) {
+  const name = identifier.getText();
+  const declaration = identifier.getSourceFile()
+    .getDescendantsOfKind(SyntaxKind.VariableDeclaration)
+    .find((candidate) => candidate.getName() === name);
+  return declaration?.getInitializer() ?? null;
+}
+
+/**
+ * The Qase IDs held under `propertyNames` in the table a loop iterates over.
+ *
+ * The table may be written inline or - as the specs do - declared as a const
+ * just above the loop. Only the properties the loop actually passes to qase()
+ * are read: a bare list of numbers is never claimed as IDs, since
+ * `[3, 153].forEach(...)` is indistinguishable from a loop over ordinary values
+ * and claiming those would hide real cases from the report.
+ */
+function idTableLiterals(receiver, propertyNames) {
+  if (!propertyNames.length) return [];
+  const table = Node.isIdentifier(receiver) ? declaredValue(receiver) : receiver;
+  if (!table) return [];
+  return table
+    .getDescendantsOfKind(SyntaxKind.PropertyAssignment)
+    .filter((property) => propertyNames.includes(property.getName()))
+    .flatMap((property) => {
+      const value = property.getInitializer();
+      return value ? numericLiterals(value) : [];
+    });
+}
+
 /**
  * True when a callee resolves to one of `names`, seeing through the `.skip` /
  * `.only` suffixes and the `(cond ? it.skip : it)` form the specs use.
@@ -152,15 +188,84 @@ function isCallTo(node, names) {
   return Node.isIdentifier(callee) && names.has(callee.getText());
 }
 
+/** The last function-valued argument of a call - the callback, for our purposes. */
+function callbackArgument(call) {
+  return [...call.getArguments()]
+    .reverse()
+    .find((argument) => Node.isArrowFunction(argument) || Node.isFunctionExpression(argument)) ?? null;
+}
+
 /** The `{ ... }` body of the last arrow-function argument of a call. */
 function arrowBody(call) {
-  for (const argument of [...call.getArguments()].reverse()) {
-    if (Node.isArrowFunction(argument) || Node.isFunctionExpression(argument)) {
-      const body = argument.getBody();
-      if (Node.isBlock(body)) return body;
+  const body = callbackArgument(call)?.getBody();
+  return body && Node.isBlock(body) ? body : null;
+}
+
+/**
+ * Local name -> property name for a callback's single parameter.
+ *
+ * `(provider) => ...` binds the whole element, so `provider` maps to nothing and
+ * the property is read at the use site instead. `({qaseID, type: kind}) => ...`
+ * binds two properties, one of them renamed.
+ */
+function parameterBindings(callback) {
+  const [parameter] = callback?.getParameters() ?? [];
+  const name = parameter?.getNameNode();
+  if (!name) return {element: null, destructured: new Map()};
+  if (!Node.isObjectBindingPattern(name)) return {element: name.getText(), destructured: new Map()};
+  const destructured = new Map(
+    name.getElements().map((element) => [
+      element.getName(),
+      (element.getPropertyNameNode() ?? element.getNameNode()).getText(),
+    ]),
+  );
+  return {element: null, destructured};
+}
+
+/**
+ * The table properties a loop passes to qase() as the case ID.
+ *
+ * Read from the call rather than assumed, so the key can be named anything:
+ * `(provider) => qase(provider.caseId, ...)` names `caseId`, and the
+ * destructured `({qaseID}) => qase(qaseID, ...)` names `qaseID`. A loop whose
+ * qase() argument is not a property of the loop variable names nothing, and
+ * nothing is then claimed from its table.
+ */
+function idPropertyNames(forEachCall, qaseCalls) {
+  const {element, destructured} = parameterBindings(callbackArgument(forEachCall));
+  const names = new Set();
+  for (const call of qaseCalls) {
+    let [idNode] = call.getArguments();
+    // provider.ids[0] reads `ids`, same as provider.ids does.
+    while (idNode && Node.isElementAccessExpression(idNode)) idNode = idNode.getExpression();
+    if (!idNode) continue;
+    if (element && Node.isPropertyAccessExpression(idNode) && idNode.getExpression().getText() === element) {
+      names.add(idNode.getName());
+    } else if (Node.isIdentifier(idNode) && destructured.has(idNode.getText())) {
+      names.add(destructured.get(idNode.getText()));
     }
   }
-  return null;
+  return [...names];
+}
+
+/**
+ * Qase IDs mentioned by a loop we are skipping.
+ *
+ * Two sources are trusted: the numbers in the first argument of a qase() call
+ * inside the loop, and the table entries that argument reads - that is where the
+ * IDs live when the call site says `qase(provider.qaseID, ...)`.
+ */
+function harvestLoopIds(forEachCall) {
+  const qaseCalls = forEachCall
+    .getDescendantsOfKind(SyntaxKind.CallExpression)
+    .filter((call) => isCallTo(call, new Set(['qase'])));
+  const receiver = forEachCall.getExpression().getExpression();
+  const ids = new Set(idTableLiterals(receiver, idPropertyNames(forEachCall, qaseCalls)));
+  for (const call of qaseCalls) {
+    const [idNode] = call.getArguments();
+    if (idNode) numericLiterals(idNode).forEach((id) => ids.add(id));
+  }
+  return [...ids];
 }
 
 /** Leading whitespace of the line a node starts on. */
@@ -173,8 +278,9 @@ function indentOf(node) {
 /**
  * Walk one spec file.
  *
- * Returns the tests it could read, the loops it refused to read, and the IDs
- * harvested from those loops so their Qase cases are not reported as orphans.
+ * Returns the tests it could read, the constructs it refused to read, and the
+ * IDs harvested from those constructs so their cases are not reported as
+ * orphans.
  */
 function readSpec(sourceFile, file) {
   const tests = [];
@@ -221,7 +327,9 @@ function readSpec(sourceFile, file) {
         continue;
       }
 
-      // x.forEach(...): generates tests we cannot read statically.
+      // x.forEach(...): generates tests we cannot read statically. Hand the
+      // whole loop to a human, claiming the IDs it names so they are not also
+      // reported as orphans.
       if (Node.isCallExpression(child)
           && Node.isPropertyAccessExpression(child.getExpression())
           && child.getExpression().getName() === 'forEach'
@@ -261,41 +369,6 @@ function readSpec(sourceFile, file) {
 
   walk(sourceFile, []);
   return {tests, manual, harvested};
-}
-
-/**
- * The numbers in an `Object.entries({...})` / `Object.values({...})` receiver.
- *
- * Nothing else counts as a table of IDs. A loop over plain numbers - say
- * `[3, 153].forEach(...)` - looks identical to one, and claiming its values
- * would hide those cases from the report; over-reporting them is the safer way
- * to be wrong.
- */
-function idTableLiterals(receiver) {
-  if (!Node.isCallExpression(receiver)) return [];
-  const callee = receiver.getExpression();
-  if (!Node.isPropertyAccessExpression(callee)) return [];
-  if (callee.getExpression().getText() !== 'Object') return [];
-  if (!['entries', 'values'].includes(callee.getName())) return [];
-  const [table] = receiver.getArguments();
-  return table ? numericLiterals(table) : [];
-}
-
-/**
- * Qase IDs mentioned by a loop we are skipping.
- *
- * Two sources are trusted: the first argument of a qase() call inside the loop,
- * and the ID table it iterates over - that is where the IDs live when the call
- * site reads `qase(qaseID[0], ...)`.
- */
-function harvestLoopIds(forEachCall) {
-  const ids = new Set(idTableLiterals(forEachCall.getExpression().getExpression()));
-  for (const call of forEachCall.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    if (!isCallTo(call, new Set(['qase']))) continue;
-    const [idNode] = call.getArguments();
-    if (idNode) numericLiterals(idNode).forEach((id) => ids.add(id));
-  }
-  return [...ids];
 }
 
 // --------------------------------------------------------------------------- //
@@ -549,7 +622,11 @@ function printReport(report, manual, fixing) {
   if (!manual.length) console.log('  none');
   for (const entry of [...manual].sort(byLine)) {
     console.log(`  ${entry.file}:${entry.line}  ${entry.note}`);
-    console.log(`      ${fmtSuite(entry.suite)}; assuming it references ${entry.ids.sort((a, b) => a - b).join(', ') || 'no IDs'}`);
+    // An entry names no IDs when nothing it mentions could be read as one.
+    const ids = entry.ids?.length
+      ? `; assuming it references ${[...entry.ids].sort((a, b) => a - b).join(', ')}`
+      : '';
+    console.log(`      ${fmtSuite(entry.suite)}${ids}`);
   }
   console.log();
 }
@@ -559,7 +636,7 @@ function printReport(report, manual, fixing) {
 function usage(log) {
   log('usage: node qase-sync.mjs [--fix]');
   log('       --fix   repair stale IDs and insert missing ones, in place');
-  log('       run with no flags to report only; exits 1 if there is drift');
+  log('       run with no flags to report only; exits 1 if anything needs a human');
   log('env:   QASE_API_TOKEN, QASE_PROJECT_CODE (both required)');
   log('note:  via npm the flag needs a separator - npm run qase-sync -- --fix');
 }
@@ -637,17 +714,18 @@ async function main() {
 
   if (fix) {
     const {applied, skipped} = applyFixes(sourceFiles, report);
-    console.error(`Applied ${applied} fix(es); ${skipped} left for manual handling.`);
-    return skipped === 0 ? 0 : 1;
+    console.error(
+      `Applied ${applied} fix(es); ${skipped} could not be repaired, ${manual.length} need manual review.`,
+    );
+    return skipped === 0 && manual.length === 0 ? 0 : 1;
   }
 
   const drift = report.stale.length > 0 || report.missing.length > 0 || report.duplicate.length > 0;
-  return drift ? 1 : 0;
+  return drift || manual.length > 0 ? 1 : 0;
 }
 
-// Exit 1 has to mean "drift" and nothing else: --fix uses it to say "some items
-// are left for a human", and CI reads that as a soft failure it can still open a
-// PR from. A crash must not be mistaken for it.
+// Exit 1 has to mean "a human is needed" and nothing else: CI reads it as a soft
+// failure it can still open a PR from. A crash must not be mistaken for it.
 process.exitCode = await main().catch((error) => {
   console.error(error?.stack ?? error);
   return 2;
