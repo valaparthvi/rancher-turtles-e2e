@@ -162,7 +162,7 @@ describe('Import CAPD RKE2 Class-Cluster for Upgrade', {tags: '@upgrade'}, () =>
       );
 
       if(skipClusterDeletion) {
-        qase(442, it('Remove imported CAPD cluster from Rancher Manager and Delete the CAPD cluster', () => {
+        qase(246, it('Remove imported CAPD cluster from Rancher Manager and Delete the CAPD cluster', () => {
           // Delete the imported cluster
           // Ensure that the provisioned CAPI cluster still exists
           importedRancherv3ClusterDeletion(clusterName);
