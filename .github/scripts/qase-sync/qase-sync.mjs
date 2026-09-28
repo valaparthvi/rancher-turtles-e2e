@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /*
-Keeps the Qase IDs in the Cypress e2e specs in sync with the Qase project.
+Keeps the Qase IDs in a Cypress project's specs in sync with the Qase project.
 
-Reports, and optionally fixes, four kinds of drift between the specs directly
-under tests/cypress/latest/e2e (sub-folders, legacy/ among them, are not read)
-and Qase TestOps:
+Reports, and optionally fixes, four kinds of drift between the specs and Qase
+TestOps:
 
   stale     qase(<id>, ...) points at a case that no longer exists
   missing   an it() has no qase(...) wrapper at all
@@ -13,13 +12,41 @@ and Qase TestOps:
 
 Local tests match Qase cases on the suite path plus the test title:
 describe()/context() titles map 1:1 to the Qase suite tree, and the it() title
-maps to the case title.
+maps to the case title. A leading FLEET-128: in either title is ignored when
+matching - the ID that counts is the one in the qase() call.
 
 Usage:
     QASE_API_TOKEN=... node qase-sync.mjs           # report
     QASE_API_TOKEN=... node qase-sync.mjs --fix     # report and rewrite
 
-Reads QASE_API_TOKEN and QASE_PROJECT_CODE from the environment; both are required.
+Which specs are read, and how they are written, comes from the nearest
+qase-sync.config.json found by walking up from the working directory - so the
+project being synced is the one you are standing in, never the one this script
+happens to live in. All paths in it are relative to the config file:
+
+    {
+      "projectCode": "RT",
+      "specs": ["tests/cypress/latest/e2e/*.spec.ts"]
+    }
+
+specs is a list of globs; one starting with ! excludes what it matches, which
+is how a project keeps a sub-folder out once its globs go recursive.
+
+cypress-qase-reporter takes the wrapper in either of two places, and reading
+works out which from the test itself, per test - so a project, or one file, may
+use both:
+
+    test    qase(651, it('title', () => {}))    the wrapper takes the test
+    title   it(qase(651, 'title'), () => {})    the wrapper takes the title
+
+Only wrapping a test that has no ID yet calls for a choice, and it is taken from
+the nearest already-wrapped test in the same file. A project with no wrapped
+test anywhere has nothing to copy, so those tests are left alone: wrap one by
+hand and every run after follows it.
+
+Reads QASE_API_TOKEN from the environment; it is required. QASE_PROJECT_CODE is
+optional and overrides projectCode, for syncing a checkout against a scratch
+Qase project.
 
 Exit codes: 0 clean, 1 needs a human, 2 error.
 
@@ -33,21 +60,18 @@ local test, or a test that was legitimately renamed, is not something a change
 to the specs would resolve.
 */
 
-import {existsSync, readdirSync} from 'node:fs';
-import {dirname, join, resolve} from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {existsSync, readFileSync} from 'node:fs';
+import {dirname, join, relative, resolve} from 'node:path';
 import {Node, Project, SyntaxKind} from 'ts-morph';
 
 const QASE_API = 'https://api.qase.io/v1';
 const PAGE_SIZE = 100;
 
-// Anchored to this file - <repo>/.github/scripts/qase-sync/qase-sync.mjs - so the
-// script runs the same from the repo root, from here via `npm run`, or from CI.
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const SPEC_DIR = join(REPO_ROOT, 'tests', 'cypress', 'latest', 'e2e');
+const CONFIG_NAME = 'qase-sync.config.json';
 
 const IT_NAMES = new Set(['it', 'xit']);
 const SUITE_NAMES = new Set(['describe', 'context', 'xdescribe', 'xcontext']);
+const QASE_NAMES = new Set(['qase']);
 
 // --------------------------------------------------------------------------- //
 // Qase API
@@ -258,7 +282,7 @@ function idPropertyNames(forEachCall, qaseCalls) {
 function harvestLoopIds(forEachCall) {
   const qaseCalls = forEachCall
     .getDescendantsOfKind(SyntaxKind.CallExpression)
-    .filter((call) => isCallTo(call, new Set(['qase'])));
+      .filter((call) => isCallTo(call, QASE_NAMES));
   const receiver = forEachCall.getExpression().getExpression();
   const ids = new Set(idTableLiterals(receiver, idPropertyNames(forEachCall, qaseCalls)));
   for (const call of qaseCalls) {
@@ -266,6 +290,101 @@ function harvestLoopIds(forEachCall) {
     if (idNode) numericLiterals(idNode).forEach((id) => ids.add(id));
   }
   return [...ids];
+}
+
+// --------------------------------------------------------------------------- //
+// Wrapper shapes
+//
+// cypress-qase-reporter takes the wrapper in two places, and a project - or a
+// single file - may use both:
+//
+//   test    qase(651, it('title', () => {}))    the wrapper takes the test
+//   title   it(qase(651, 'title'), () => {})    the wrapper takes the title
+//
+// Reading never has to choose. The two are structurally distinct - qase()
+// outside the it() call, or inside as its first argument - so each test is read
+// in whichever shape it is written in. Only inserting a wrapper that is not
+// there yet involves a decision; see shapeChooser.
+// --------------------------------------------------------------------------- //
+
+/**
+ * The nodes that make up a test, in whichever shape it is written.
+ *
+ * Returns `shape: null` for an it() with no wrapper, since there is nothing to
+ * read a shape from.
+ */
+function matchTest(node) {
+  // qase(...) outside: qase(id, it(...)), and the qase(id, callee)('title', ...)
+  // variant where the wrapper is itself the callee of the test call.
+  if (isCallTo(node, QASE_NAMES)) {
+    const [idNode, wrapped] = node.getArguments();
+    const parent = node.getParent();
+    const itCall = Node.isCallExpression(parent) && parent.getExpression() === node
+      ? parent
+      : (wrapped && Node.isCallExpression(wrapped) && isItCallee(wrapped.getExpression()) ? wrapped : null);
+    if (!itCall) return null;
+    return {itCall, idNode: idNode ?? null, titleNode: itCall.getArguments()[0] ?? null, shape: 'test'};
+  }
+
+  if (!Node.isCallExpression(node) || !isItCallee(node.getExpression())) return null;
+
+  // qase(...) inside, in place of the title.
+  const [first] = node.getArguments();
+  if (first && isCallTo(first, QASE_NAMES)) {
+    const [idNode, titleNode] = first.getArguments();
+    return {itCall: node, idNode: idNode ?? null, titleNode: titleNode ?? null, shape: 'title'};
+  }
+
+  return {itCall: node, idNode: null, titleNode: first ?? null, shape: null};
+}
+
+const INSERTERS = {
+  // Wrapping the whole statement keeps the trailing semicolon correct.
+  test(test, id, fullText) {
+    if (!test.statementSpan) return null;
+    const [start, end] = test.itSpan;
+    return {
+      span: test.statementSpan,
+      text: `qase(${id}, ${fullText.slice(start, end)}\n${test.indent});`,
+    };
+  },
+
+  // Only the title argument moves, so tags and callback stay untouched.
+  title(test, id, fullText) {
+    if (!test.titleSpan) return null;
+    const [start, end] = test.titleSpan;
+    return {span: test.titleSpan, text: `qase(${id}, ${fullText.slice(start, end)})`};
+  },
+};
+
+/**
+ * Decides the shape to write a new wrapper in.
+ *
+ * An unwrapped it() carries no evidence of its own, so the nearest wrapped test
+ * in the same file decides - the same thing a person editing that file would
+ * copy, and it stays right in a file that mixes the two. Failing that the rest
+ * of the project decides. A project with no wrapper anywhere has nothing to
+ * copy, and is left alone rather than guessed at: wrapping one test by hand
+ * answers it for every run after.
+ */
+function shapeChooser(tests) {
+  const perFile = new Map();
+  const totals = new Map();
+  for (const test of tests) {
+    if (!test.shape) continue;
+    if (!perFile.has(test.file)) perFile.set(test.file, []);
+    perFile.get(test.file).push(test);
+    totals.set(test.shape, (totals.get(test.shape) ?? 0) + 1);
+  }
+  const overall = [...totals].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const choose = (test) => {
+    const neighbours = perFile.get(test.file) ?? [];
+    if (!neighbours.length) return overall;
+    return neighbours.reduce((best, candidate) => (
+      Math.abs(candidate.line - test.line) < Math.abs(best.line - test.line) ? candidate : best
+    )).shape;
+  };
+  return {choose, totals};
 }
 
 /** Leading whitespace of the line a node starts on. */
@@ -287,8 +406,8 @@ function readSpec(sourceFile, file) {
   const manual = [];
   const harvested = new Set();
 
-  /** Record a test, given the call that declares it. */
-  const record = (itCall, idNode, suite) => {
+  /** Record a test, given the nodes it was recognised by. */
+  const record = ({itCall, idNode, titleNode, shape}, suite) => {
     const line = itCall.getStartLineNumber();
     const id = idNode ? literalId(idNode) : null;
 
@@ -302,15 +421,16 @@ function readSpec(sourceFile, file) {
       return;
     }
 
-    const [titleArg] = itCall.getArguments();
     const statement = itCall.getFirstAncestorByKind(SyntaxKind.ExpressionStatement);
     tests.push({
       file,
       line,
       suite,
-      title: titleArg ? literalTitle(titleArg) : null,
+      title: titleNode ? literalTitle(titleNode) : null,
       id,
+      shape,
       idSpan: idNode ? [idNode.getStart(), idNode.getEnd()] : null,
+      titleSpan: titleNode ? [titleNode.getStart(), titleNode.getEnd()] : null,
       itSpan: [itCall.getStart(), itCall.getEnd()],
       statementSpan: statement ? [statement.getStart(), statement.getEnd()] : null,
       indent: indentOf(statement ?? itCall),
@@ -343,23 +463,11 @@ function readSpec(sourceFile, file) {
         continue;
       }
 
-      // qase(<id>, it(...)) - and the qase(<id>, <callee>)('title', ...) variant,
-      // where the qase call is itself the callee of the test call.
-      if (isCallTo(child, new Set(['qase']))) {
-        const [idNode, wrapped] = child.getArguments();
-        const parent = child.getParent();
-        const itCall = Node.isCallExpression(parent) && parent.getExpression() === child
-          ? parent
-          : (wrapped && Node.isCallExpression(wrapped) && isItCallee(wrapped.getExpression()) ? wrapped : null);
-        if (itCall) {
-          record(itCall, idNode, suite);
-          continue;
-        }
-      }
-
-      // A bare it(...) with no wrapper.
-      if (Node.isCallExpression(child) && isItCallee(child.getExpression())) {
-        record(child, null, suite);
+      // A test, in whichever shape it is written. Not descending afterwards is
+      // what keeps the wrapper and the it() it holds from being counted twice.
+      const found = matchTest(child);
+      if (found) {
+        record(found, suite);
         continue;
       }
 
@@ -376,7 +484,19 @@ function readSpec(sourceFile, file) {
 // --------------------------------------------------------------------------- //
 
 const samePath = (a, b) => a.length === b.length && a.every((part, i) => part === b[i]);
-const locationKey = (suite, title) => `${suite.join(' › ')}\u0000${title}`;
+
+/**
+ * A title reduced to the part that identifies the case.
+ *
+ * A leading `FLEET-128: ` is dropped. Some projects repeat the case ID in the
+ * title, but the ID this script reads and writes is the one in the qase() call,
+ * so the prefix is decoration and a test that carries it is the same test that
+ * does not. Both sides are normalised, so it makes no difference whether the
+ * spec, the Qase case, or neither spells it out.
+ */
+const matchTitle = (title) => title.replace(/^\s*[A-Za-z][\w.]*-\d+\s*:\s*/, '');
+
+const locationKey = (suite, title) => `${suite.join(' › ')}\u0000${matchTitle(title)}`;
 
 function compare(tests, cases, suitePaths, harvested) {
   const caseById = new Map(cases.map((c) => [c.id, c]));
@@ -386,8 +506,9 @@ function compare(tests, cases, suitePaths, harvested) {
     const key = locationKey(suitePaths.get(entry.suite_id) ?? [], entry.title);
     if (!byLocation.has(key)) byLocation.set(key, []);
     byLocation.get(key).push(entry.id);
-    if (!byTitle.has(entry.title)) byTitle.set(entry.title, []);
-    byTitle.get(entry.title).push(entry.id);
+    const title = matchTitle(entry.title);
+    if (!byTitle.has(title)) byTitle.set(title, []);
+    byTitle.get(title).push(entry.id);
   }
 
   const claimed = new Map();
@@ -424,7 +545,7 @@ function compare(tests, cases, suitePaths, harvested) {
     if (all.length) {
       return {id: null, reason: 'all matching Qase cases are already claimed', candidates: all};
     }
-    const sameTitle = byTitle.get(test.title) ?? [];
+    const sameTitle = byTitle.get(matchTitle(test.title)) ?? [];
     return {
       id: null,
       reason: sameTitle.length
@@ -457,7 +578,8 @@ function compare(tests, cases, suitePaths, harvested) {
     }
     const entry = caseById.get(test.id);
     const suite = suitePaths.get(entry.suite_id) ?? [];
-    if (test.title !== null && !(samePath(suite, test.suite) && entry.title === test.title)) {
+    if (test.title !== null
+        && !(samePath(suite, test.suite) && matchTitle(entry.title) === matchTitle(test.title))) {
       mismatched.push({test, caseId: test.id, qaseSuite: suite, qaseTitle: entry.title});
     }
   }
@@ -491,7 +613,7 @@ function compare(tests, cases, suitePaths, harvested) {
 // --------------------------------------------------------------------------- //
 
 /** Rewrite the specs in place. Returns how much was applied and left behind. */
-function applyFixes(sourceFiles, report) {
+function applyFixes(sourceFiles, report, chooseShape) {
   const edits = new Map();
   let applied = 0;
   let skipped = 0;
@@ -510,16 +632,33 @@ function applyFixes(sourceFiles, report) {
     else queue(item.test.file, item.test.idSpan, String(item.proposed));
   }
 
+  let unknownShape = 0;
   for (const item of report.missing) {
     const {test} = item;
-    if (item.proposed === null || test.statementSpan === null) {
+    if (item.proposed === null) {
       skipped += 1;
       continue;
     }
-    // Wrapping the whole statement keeps the trailing semicolon correct.
-    const [start, end] = test.itSpan;
-    const body = sourceFiles.get(test.file).getFullText().slice(start, end);
-    queue(test.file, test.statementSpan, `qase(${item.proposed}, ${body}\n${test.indent});`);
+    // Nothing in this project says how a wrapper is written here. Writing the
+    // wrong one would silently drop the test out of the Qase run.
+    const shape = chooseShape(test);
+    if (!shape) {
+      unknownShape += 1;
+      skipped += 1;
+      continue;
+    }
+    const edit = INSERTERS[shape](test, item.proposed, sourceFiles.get(test.file).getFullText());
+    if (edit === null) {
+      skipped += 1;
+      continue;
+    }
+    queue(test.file, edit.span, edit.text);
+  }
+  if (unknownShape) {
+    console.error(
+      `${unknownShape} test(s) left unwrapped: no existing qase() to copy the shape from.`
+      + ' Wrap one test by hand and re-run; the rest follow it.',
+    );
   }
 
   for (const [file, fileEdits] of edits) {
@@ -632,12 +771,76 @@ function printReport(report, manual, fixing) {
 }
 
 // --------------------------------------------------------------------------- //
+// Configuration
+// --------------------------------------------------------------------------- //
+
+/** The nearest config file at or above `start`, or null. */
+function findConfig(start) {
+  let dir = resolve(start);
+  for (; ;) {
+    const candidate = join(dir, CONFIG_NAME);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * Read and check a config file. Throws with a message naming the file.
+ *
+ * Unknown keys are an error rather than being ignored, so a misspelt "spec"
+ * does not quietly leave the project reading nothing.
+ */
+function loadConfig(path) {
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    throw new Error(`${path}: ${error.message}`);
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${path}: expected a JSON object`);
+  }
+
+  const known = new Set(['projectCode', 'specs']);
+  const unknown = Object.keys(raw).filter((key) => !known.has(key));
+  if (unknown.length) throw new Error(`${path}: unknown key(s): ${unknown.join(', ')}`);
+
+  if (!Array.isArray(raw.specs) || !raw.specs.length
+      || raw.specs.some((pattern) => typeof pattern !== 'string')) {
+    throw new Error(`${path}: "specs" must be a non-empty array of glob patterns`);
+  }
+  // The environment wins, so a checkout can be synced against a scratch project
+  // without editing a committed file.
+  const projectCode = process.env.QASE_PROJECT_CODE || raw.projectCode;
+  if (typeof projectCode !== 'string' || !projectCode) {
+    throw new Error(`${path}: "projectCode" is required unless QASE_PROJECT_CODE is set`);
+  }
+
+  const dir = dirname(path);
+  return {
+    dir,
+    projectCode,
+    // For the warning: a stray QASE_PROJECT_CODE in the shell otherwise syncs
+    // one project's specs against another project's cases, in silence.
+    overrides: raw.projectCode && raw.projectCode !== projectCode ? raw.projectCode : null,
+    // Globs are relative to the config file, not to the caller's cwd.
+    specs: raw.specs.map((pattern) => (pattern.startsWith('!')
+        ? `!${resolve(dir, pattern.slice(1))}`
+        : resolve(dir, pattern))),
+  };
+}
+
+// --------------------------------------------------------------------------- //
 
 function usage(log) {
   log('usage: node qase-sync.mjs [--fix]');
   log('       --fix   repair stale IDs and insert missing ones, in place');
   log('       run with no flags to report only; exits 1 if anything needs a human');
-  log('env:   QASE_API_TOKEN, QASE_PROJECT_CODE (both required)');
+  log(`conf:  nearest ${CONFIG_NAME} at or above the working directory,`);
+  log('       giving projectCode and specs (globs)');
+  log('env:   QASE_API_TOKEN required; QASE_PROJECT_CODE overrides projectCode');
   log('note:  via npm the flag needs a separator - npm run qase-sync -- --fix');
 }
 
@@ -665,15 +868,52 @@ async function main() {
     console.error('QASE_API_TOKEN is not set');
     return 2;
   }
-  const projectId = process.env.QASE_PROJECT_CODE;
-  if (!projectId) {
-    console.error('QASE_PROJECT_CODE is not set');
+  // Anchored to where the script was invoked, never to where it lives: the
+  // project being synced is the one the caller is standing in.
+  const configPath = findConfig(process.cwd());
+  if (!configPath) {
+    console.error(`no ${CONFIG_NAME} in ${process.cwd()} or any parent directory`);
     return 2;
   }
-  const specDir = SPEC_DIR;
-  if (!existsSync(specDir)) {
-    console.error(`spec dir not found: ${specDir}`);
+  let config;
+  try {
+    config = loadConfig(configPath);
+  } catch (error) {
+    console.error(error.message);
     return 2;
+  }
+  const projectId = config.projectCode;
+  if (config.overrides) {
+    console.error(
+        `warning: QASE_PROJECT_CODE=${projectId} overrides projectCode "${config.overrides}" from ${configPath}`,
+    );
+  }
+
+  // skipAddingFilesFromTsConfig keeps this to just the specs; nothing is type-checked.
+  const project = new Project({useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true});
+  const specFiles = project.addSourceFilesAtPaths(config.specs)
+      .sort((a, b) => a.getFilePath().localeCompare(b.getFilePath()));
+  // Read before the API call: matching nothing is a misconfigured "specs", and
+  // carrying on would report every case in the project as an orphan.
+  if (!specFiles.length) {
+    console.error(`${configPath}: "specs" matched no files`);
+    return 2;
+  }
+
+  const sourceFiles = new Map();
+  const tests = [];
+  const manual = [];
+  const harvested = new Set();
+
+  for (const sourceFile of specFiles) {
+    // Named relative to the config so the report reads the same wherever it is
+    // run from, and stays unambiguous when the globs span directories.
+    const name = relative(config.dir, sourceFile.getFilePath());
+    sourceFiles.set(name, sourceFile);
+    const found = readSpec(sourceFile, name);
+    tests.push(...found.tests);
+    manual.push(...found.manual);
+    found.harvested.forEach((id) => harvested.add(id));
   }
 
   let suites;
@@ -689,31 +929,19 @@ async function main() {
   }
   const suitePaths = buildSuitePaths(suites);
 
-  // skipAddingFilesFromTsConfig keeps this to just the specs; nothing is type-checked.
-  const project = new Project({useInMemoryFileSystem: false, skipAddingFilesFromTsConfig: true});
-  const sourceFiles = new Map();
-  const tests = [];
-  const manual = [];
-  const harvested = new Set();
-
-  for (const name of readdirSync(specDir).sort()) {
-    if (!name.endsWith('.spec.ts')) continue;
-    const sourceFile = project.addSourceFileAtPath(join(specDir, name));
-    sourceFiles.set(name, sourceFile);
-    const found = readSpec(sourceFile, name);
-    tests.push(...found.tests);
-    manual.push(...found.manual);
-    found.harvested.forEach((id) => harvested.add(id));
-  }
-
   const report = compare(tests, cases, suitePaths, harvested);
+  const {choose, totals} = shapeChooser(tests);
 
+  // Naming the shapes seen is how a file that drifted into the other one shows
+  // up without anybody going looking for it.
+  const shapes = [...totals].sort((a, b) => b[1] - a[1]).map(([shape, n]) => `${shape} ${n}`).join(', ');
   console.log(`Qase project ${projectId}: ${suites.length} suites, ${cases.length} cases`);
-  console.log(`Local specs: ${tests.length} tests across ${specDir}\n`);
+  console.log(`Local specs: ${tests.length} tests in ${specFiles.length} file(s), ${config.dir}`);
+  console.log(`Wrapper shapes: ${shapes || 'none yet'}\n`);
   printReport(report, manual, fix);
 
   if (fix) {
-    const {applied, skipped} = applyFixes(sourceFiles, report);
+    const {applied, skipped} = applyFixes(sourceFiles, report, choose);
     console.error(
       `Applied ${applied} fix(es); ${skipped} could not be repaired, ${manual.length} need manual review.`,
     );
