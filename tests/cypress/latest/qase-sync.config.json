@@ -1,6 +1,6 @@
 {
   "projectCode": "RT",
   "specs": [
-    "tests/cypress/latest/e2e/*.spec.ts"
+    "e2e/*.spec.ts"
   ]
 }

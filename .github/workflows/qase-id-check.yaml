@@ -54,6 +54,12 @@ jobs:
 
       - name: Run Qase sync
         id: sync
+        # qase-sync.config.json lives here, and the tool only ever searches
+        # upward from the directory it is invoked in - from the repo root it
+        # would find no config and exit 2, which this job reads as a hard
+        # failure. The spec globs inside the config are relative to the config
+        # file, so they do not change when this path does.
+        working-directory: tests/cypress/latest
         run: |
           # Unquoted on purpose below, so an empty value collapses to no argument
           # at all rather than to an empty one the script would reject.
