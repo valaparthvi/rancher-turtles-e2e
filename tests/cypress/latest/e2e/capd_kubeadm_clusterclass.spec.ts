@@ -34,7 +34,7 @@ describe('Import CAPD Kubeadm Class-Cluster', {tags: ['@short', '@capdk']}, () =
 
   context('[SETUP]', () => {
     // To validate namespace auto-import
-    qase(229, it('Setup the namespace for importing', () => {
+    qase(299, it('Setup the namespace for importing', () => {
       cy.namespaceAutoImport('Enable');
     })
     );
@@ -162,15 +162,16 @@ describe('Import CAPD Kubeadm Class-Cluster', {tags: ['@short', '@capdk']}, () =
     })
     );
 
-    it('Check for any errors in Turtles logs', () => {
+    qase(533, it('Check for any errors in Turtles logs', () => {
       // Check for any errors
       cy.filterPodErrorLogs('rancher-turtles-controller-manager');
     })
+    );
   })
 
   context('[TEARDOWN]', () => {
     if (skipClusterDeletion) {
-      qase(301, it('Remove imported CAPD cluster from Rancher Manager', () => {
+      qase(529, it('Remove imported CAPD cluster from Rancher Manager', () => {
         // Delete the imported cluster
         // Ensure that the provisioned CAPI cluster still exists
         importedRancherv3ClusterDeletion(clusterName);
