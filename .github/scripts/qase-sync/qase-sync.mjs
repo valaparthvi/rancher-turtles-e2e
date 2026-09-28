@@ -15,49 +15,30 @@ describe()/context() titles map 1:1 to the Qase suite tree, and the it() title
 maps to the case title. A leading FLEET-128: in either title is ignored when
 matching - the ID that counts is the one in the qase() call.
 
+cypress-qase-reporter accepts the wrapper in two places; both are read, per
+test - see matchTest.
+
 Usage:
     QASE_API_TOKEN=... node qase-sync.mjs           # report
     QASE_API_TOKEN=... node qase-sync.mjs --fix     # report and rewrite
 
-Which specs are read, and how they are written, comes from the nearest
-qase-sync.config.json found by walking up from the working directory - so the
-project being synced is the one you are standing in, never the one this script
-happens to live in. All paths in it are relative to the config file:
+Which specs are read comes from the nearest qase-sync.config.json found by
+walking up from the working directory - so the project being synced is the one
+you are standing in, never the one this script happens to live in. All paths in
+it are relative to the config file, and a glob starting with ! excludes:
 
     {
       "projectCode": "RT",
       "specs": ["tests/cypress/latest/e2e/*.spec.ts"]
     }
 
-specs is a list of globs; one starting with ! excludes what it matches, which
-is how a project keeps a sub-folder out once its globs go recursive.
+QASE_API_TOKEN is required. QASE_PROJECT_CODE is optional and overrides
+projectCode, for syncing a checkout against a scratch Qase project.
 
-cypress-qase-reporter takes the wrapper in either of two places, and reading
-works out which from the test itself, per test - so a project, or one file, may
-use both:
-
-    test    qase(651, it('title', () => {}))    the wrapper takes the test
-    title   it(qase(651, 'title'), () => {})    the wrapper takes the title
-
-Only wrapping a test that has no ID yet calls for a choice, and it is taken from
-the nearest already-wrapped test in the same file. A project with no wrapped
-test anywhere has nothing to copy, so those tests are left alone: wrap one by
-hand and every run after follows it.
-
-Reads QASE_API_TOKEN from the environment; it is required. QASE_PROJECT_CODE is
-optional and overrides projectCode, for syncing a checkout against a scratch
-Qase project.
-
-Exit codes: 0 clean, 1 needs a human, 2 error.
-
-Everything a person has to act on counts towards the exit code: stale, missing
-and duplicate, which this script can repair, plus the manual-review list, which
-it cannot. Under --fix the first three drop out once they are rewritten, so a
-clean run ends at 0 while an unreadable loop or computed ID keeps it at 1.
-
-qase-only cases and title/suite mismatches never fail the run: a case with no
-local test, or a test that was legitimately renamed, is not something a change
-to the specs would resolve.
+Exit codes: 0 clean, 1 needs a human, 2 error. Exit 1 covers stale, missing and
+duplicate - which --fix removes - plus the manual-review list, which it cannot.
+qase-only cases and title/suite mismatches never fail the run; no change to the
+specs would resolve them.
 */
 
 import {existsSync, readFileSync} from 'node:fs';
@@ -294,21 +275,18 @@ function harvestLoopIds(forEachCall) {
 
 // --------------------------------------------------------------------------- //
 // Wrapper shapes
-//
-// cypress-qase-reporter takes the wrapper in two places, and a project - or a
-// single file - may use both:
-//
-//   test    qase(651, it('title', () => {}))    the wrapper takes the test
-//   title   it(qase(651, 'title'), () => {})    the wrapper takes the title
-//
-// Reading never has to choose. The two are structurally distinct - qase()
-// outside the it() call, or inside as its first argument - so each test is read
-// in whichever shape it is written in. Only inserting a wrapper that is not
-// there yet involves a decision; see shapeChooser.
 // --------------------------------------------------------------------------- //
 
 /**
- * The nodes that make up a test, in whichever shape it is written.
+ * The nodes that make up a test, in whichever shape it is written:
+ *
+ *   test    qase(651, it('title', () => {}))    the wrapper takes the test
+ *   title   it(qase(651, 'title'), () => {})    the wrapper takes the title
+ *
+ * A project, or a single file, may use both. Reading never has to choose: the
+ * two are structurally distinct - qase() outside the it() call, or inside as
+ * its first argument. Only inserting a wrapper that is not there yet involves a
+ * decision; see shapeChooser.
  *
  * Returns `shape: null` for an it() with no wrapper, since there is nothing to
  * read a shape from.
@@ -358,14 +336,13 @@ const INSERTERS = {
 };
 
 /**
- * Decides the shape to write a new wrapper in.
+ * Decides the shape to write a new wrapper in: the nearest wrapped test in the
+ * same file, then the rest of the project, then nothing.
  *
- * An unwrapped it() carries no evidence of its own, so the nearest wrapped test
- * in the same file decides - the same thing a person editing that file would
- * copy, and it stays right in a file that mixes the two. Failing that the rest
- * of the project decides. A project with no wrapper anywhere has nothing to
- * copy, and is left alone rather than guessed at: wrapping one test by hand
- * answers it for every run after.
+ * Copying the neighbour is what a person editing that file would do, and it
+ * stays right in a file that mixes the two. A project with no wrapper anywhere
+ * is left alone rather than guessed at; wrapping one test by hand answers it
+ * for every run after.
  */
 function shapeChooser(tests) {
   const perFile = new Map();
@@ -624,9 +601,7 @@ function applyFixes(sourceFiles, report, chooseShape) {
     applied += 1;
   };
 
-  // A stale or duplicated test always has a literal ID to overwrite; computed
-  // ones never get this far, they are sent to the manual-review list while the
-  // file is read.
+  // Always a literal ID to overwrite: computed ones went to manual review.
   for (const item of [...report.stale, ...report.duplicate]) {
     if (item.proposed === null) skipped += 1;
     else queue(item.test.file, item.test.idSpan, String(item.proposed));
@@ -852,9 +827,8 @@ async function main() {
     return 0;
   }
 
-  // --fix is the only other flag. Still reject anything unrecognised rather than
-  // ignoring it: a silently dropped `--fx` would look like a clean report
-  // instead of a repair.
+  // Rejected rather than ignored: a dropped `--fx` would look like a clean
+  // report instead of a repair.
   const unknown = args.filter((arg) => arg !== '--fix');
   if (unknown.length) {
     console.error(`unexpected argument(s): ${unknown.join(' ')}`);
@@ -906,8 +880,7 @@ async function main() {
   const harvested = new Set();
 
   for (const sourceFile of specFiles) {
-    // Named relative to the config so the report reads the same wherever it is
-    // run from, and stays unambiguous when the globs span directories.
+    // Relative to the config, so the report reads the same wherever it is run.
     const name = relative(config.dir, sourceFile.getFilePath());
     sourceFiles.set(name, sourceFile);
     const found = readSpec(sourceFile, name);
@@ -932,8 +905,6 @@ async function main() {
   const report = compare(tests, cases, suitePaths, harvested);
   const {choose, totals} = shapeChooser(tests);
 
-  // Naming the shapes seen is how a file that drifted into the other one shows
-  // up without anybody going looking for it.
   const shapes = [...totals].sort((a, b) => b[1] - a[1]).map(([shape, n]) => `${shape} ${n}`).join(', ');
   console.log(`Qase project ${projectId}: ${suites.length} suites, ${cases.length} cases`);
   console.log(`Local specs: ${tests.length} tests in ${specFiles.length} file(s), ${config.dir}`);
