@@ -52,7 +52,7 @@ const CONFIG_NAME = 'qase-sync.config.json';
 
 const IT_NAMES = new Set(['it', 'xit']);
 const SUITE_NAMES = new Set(['describe', 'context', 'xdescribe', 'xcontext']);
-const QASE_NAMES = new Set(['qase']);
+const QASE_NAME = 'qase';
 
 // --------------------------------------------------------------------------- //
 // Qase API
@@ -89,16 +89,15 @@ async function qaseFetchAll(kind, project, token) {
 function buildSuitePaths(suites) {
   const byId = new Map(suites.map((suite) => [suite.id, suite]));
   const paths = new Map();
-  const resolvePath = (id, seen) => {
+  const resolvePath = (id) => {
     if (paths.has(id)) return paths.get(id);
     const suite = byId.get(id);
-    const parent = suite.parent_id;
-    const prefix = byId.has(parent) && !seen.has(id) ? resolvePath(parent, new Set([...seen, id])) : [];
+    const prefix = byId.has(suite.parent_id) ? resolvePath(suite.parent_id) : [];
     const path = [...prefix, suite.title];
     paths.set(id, path);
     return path;
   };
-  for (const id of byId.keys()) resolvePath(id, new Set());
+  for (const id of byId.keys()) resolvePath(id);
   return paths;
 }
 
@@ -187,10 +186,11 @@ const isItCallee = (node) => isCalleeNamed(node, IT_NAMES);
 /** True for `describe`, `context` and their `x`-prefixed and `.skip`/`.only` forms. */
 const isSuiteCallee = (node) => isCalleeNamed(node, SUITE_NAMES);
 
-function isCallTo(node, names) {
+/** True for a direct `qase(...)` call, and nothing else. */
+function isQaseCall(node) {
   if (!Node.isCallExpression(node)) return false;
   const callee = node.getExpression();
-  return Node.isIdentifier(callee) && names.has(callee.getText());
+  return Node.isIdentifier(callee) && callee.getText() === QASE_NAME;
 }
 
 /** The last function-valued argument of a call - the callback, for our purposes. */
@@ -261,9 +261,7 @@ function idPropertyNames(forEachCall, qaseCalls) {
  * IDs live when the call site says `qase(provider.qaseID, ...)`.
  */
 function harvestLoopIds(forEachCall) {
-  const qaseCalls = forEachCall
-    .getDescendantsOfKind(SyntaxKind.CallExpression)
-      .filter((call) => isCallTo(call, QASE_NAMES));
+  const qaseCalls = forEachCall.getDescendantsOfKind(SyntaxKind.CallExpression).filter(isQaseCall);
   const receiver = forEachCall.getExpression().getExpression();
   const ids = new Set(idTableLiterals(receiver, idPropertyNames(forEachCall, qaseCalls)));
   for (const call of qaseCalls) {
@@ -294,7 +292,7 @@ function harvestLoopIds(forEachCall) {
 function matchTest(node) {
   // qase(...) outside: qase(id, it(...)), and the qase(id, callee)('title', ...)
   // variant where the wrapper is itself the callee of the test call.
-  if (isCallTo(node, QASE_NAMES)) {
+  if (isQaseCall(node)) {
     const [idNode, wrapped] = node.getArguments();
     const parent = node.getParent();
     const itCall = Node.isCallExpression(parent) && parent.getExpression() === node
@@ -308,7 +306,7 @@ function matchTest(node) {
 
   // qase(...) inside, in place of the title.
   const [first] = node.getArguments();
-  if (first && isCallTo(first, QASE_NAMES)) {
+  if (first && isQaseCall(first)) {
     const [idNode, titleNode] = first.getArguments();
     return {itCall: node, idNode: idNode ?? null, titleNode: titleNode ?? null, shape: 'title'};
   }
@@ -671,44 +669,38 @@ function printCandidates(candidates) {
   }
 }
 
+/**
+ * One section of the drift report: a heading, two lines per item, and whatever
+ * candidates the lookup turned up. `describe` supplies the part of the first
+ * line that differs between sections.
+ */
+function printSection(title, items, describe) {
+  console.log(`== ${title} (${items.length}) ==`);
+  if (!items.length) console.log('  none');
+  for (const item of [...items].sort((a, b) => byLine(a.test, b.test))) {
+    console.log(`  ${item.test.file}:${item.test.line}  ${describe(item)}`);
+    console.log(`      ${fmtSuite(item.test.suite)} > '${item.test.title}'`);
+    printCandidates(item.candidates);
+  }
+  console.log();
+}
+
 function printReport(report, manual, fixing) {
   const {stale, missing, duplicate, mismatched, qaseOnly} = report;
 
-  console.log(`== Stale Qase IDs (${stale.length}) ==`);
-  if (!stale.length) console.log('  none');
-  for (const {test, dead, proposed, reason, candidates} of [...stale].sort((a, b) => byLine(a.test, b.test))) {
-    const action = proposed === null
-      ? `NO REPLACEMENT (${reason})`
-      : (fixing ? `-> ${proposed}` : `should be ${proposed}`);
-    console.log(`  ${test.file}:${test.line}  ${dead} ${action}`);
-    console.log(`      ${fmtSuite(test.suite)} > '${test.title}'`);
-    printCandidates(candidates);
-  }
-  console.log();
+  // Stale and duplicate both name the ID being replaced; missing has none yet.
+  const repair = ({proposed, reason}) => (proposed === null
+    ? `NO REPLACEMENT (${reason})`
+    : (fixing ? `-> ${proposed}` : `should be ${proposed}`));
 
-  console.log(`== Tests with no Qase ID (${missing.length}) ==`);
-  if (!missing.length) console.log('  none');
-  for (const {test, proposed, reason, candidates} of [...missing].sort((a, b) => byLine(a.test, b.test))) {
-    const action = proposed === null
-      ? `NO MATCH (${reason}) - create the case in Qase`
-      : `add qase(${proposed})`;
-    console.log(`  ${test.file}:${test.line}  ${action}`);
-    console.log(`      ${fmtSuite(test.suite)} > '${test.title}'`);
-    printCandidates(candidates);
-  }
-  console.log();
+  printSection('Stale Qase IDs', stale, (item) => `${item.dead} ${repair(item)}`);
 
-  console.log(`== Qase IDs claimed by more than one test (${duplicate.length}) ==`);
-  if (!duplicate.length) console.log('  none');
-  for (const {test, dead, owner, proposed, reason, candidates} of [...duplicate].sort((a, b) => byLine(a.test, b.test))) {
-    const action = proposed === null
-      ? `NO REPLACEMENT (${reason})`
-      : (fixing ? `-> ${proposed}` : `should be ${proposed}`);
-    console.log(`  ${test.file}:${test.line}  ${dead} is already used by ${owner}, ${action}`);
-    console.log(`      ${fmtSuite(test.suite)} > '${test.title}'`);
-    printCandidates(candidates);
-  }
-  console.log();
+  printSection('Tests with no Qase ID', missing, ({proposed, reason}) => (proposed === null
+    ? `NO MATCH (${reason}) - create the case in Qase`
+    : `add qase(${proposed})`));
+
+  printSection('Qase IDs claimed by more than one test', duplicate,
+    (item) => `${item.dead} is already used by ${item.owner}, ${repair(item)}`);
 
   console.log(`== Qase cases not present locally (${qaseOnly.length}) ==`);
   if (!qaseOnly.length) console.log('  none');
