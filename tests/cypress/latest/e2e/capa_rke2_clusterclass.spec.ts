@@ -40,7 +40,7 @@ describe('Import CAPA RKE2 Class-Cluster', {tags: ['@full', '@capar']}, () => {
     })
     );
 
-    it('Get Cloud credential ID', () => {
+    qase(651, it('Get Cloud credential ID', () => {
       cy.accesMenuSelection(['Cluster Management', 'Cloud Credentials']);
       cy.getBySel('sortable-table-list-container').should('be.visible');
       cy.typeInFilter(providerName);
@@ -50,13 +50,15 @@ describe('Import CAPA RKE2 Class-Cluster', {tags: ['@full', '@capar']}, () => {
         cy.task('suiteLog', `Cloud credential ID: ${ccID}`);
       });
     })
+    );
 
     // HelmOps to be used for this spec
     // AWSClusterStaticIdentity only allows provisioning clusters in "fleet-default"
-    it('Add Applications fleet repo', () => {
+    qase(652, it('Add Applications fleet repo', () => {
       // Add upstream apps repo
       cy.addFleetGitRepo('helm-ops-aws', vars.turtlesRepoUrl, vars.classBranch, 'examples/applications/', vars.fleetDefaultNS);
     })
+    );
     
     qase(116,
       it('Add CAPA RKE2 ClusterClass Fleet Repo and check Applications', () => {
@@ -145,10 +147,11 @@ describe('Import CAPA RKE2 Class-Cluster', {tags: ['@full', '@capar']}, () => {
     })
     );
 
-    it('Check for any errors in Turtles logs', () => {
+    qase(536, it('Check for any errors in Turtles logs', () => {
       // Check for any errors
       cy.filterPodErrorLogs('rancher-turtles-controller-manager');
     })
+    );
   })
 
   context('[TEARDOWN]', () => {
