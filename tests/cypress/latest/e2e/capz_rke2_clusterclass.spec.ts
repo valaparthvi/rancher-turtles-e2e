@@ -102,10 +102,11 @@ describe('Import CAPZ RKE2 Class-Cluster', {tags: ['@full', '@capzr']}, () => {
     })
     );
 
-    it('Check for any errors in Turtles logs', () => {
+    qase(542, it('Check for any errors in Turtles logs', () => {
       // Check for any errors
       cy.filterPodErrorLogs('rancher-turtles-controller-manager');
     })
+    );
   })
 
   context('[TEARDOWN]', () => {
