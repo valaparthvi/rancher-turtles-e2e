@@ -110,10 +110,11 @@ describe('Import CAPA Kubeadm Class-Cluster', {tags: ['@full', '@capak']}, () =>
     })
     );
 
-    it('Check for any errors in Turtles logs', () => {
+    qase(537, it('Check for any errors in Turtles logs', () => {
       // Check for any errors
       cy.filterPodErrorLogs('rancher-turtles-controller-manager');
     })
+    );
   })
 
   context('[TEARDOWN]', () => {
